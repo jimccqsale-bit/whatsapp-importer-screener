@@ -1,0 +1,13 @@
+.DS_Store
+.env
+data/*.ndjson
+data/*.json
+data/*.log
+data/*.txt
+cloudflared.log
+localhostrun.log
+server.log
+server-runtime.log
+tmp/
+*.bak
+node_modules/

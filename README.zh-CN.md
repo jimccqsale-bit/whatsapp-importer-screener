@@ -1,0 +1,124 @@
+# WhatsApp Importer Screener V2
+
+这是按 `Meta Click-to-WhatsApp -> WhatsApp Cloud API -> AI/规则筛选 -> 导出 -> Meta 回传` 思路整理过的 `Node.js` 版本。
+
+## 这版已经对齐的流程
+
+1. 接收 `WhatsApp Cloud API` webhook
+2. 按 `区号 + 文本脚本` 初判语言
+3. 用 `规则 + Claude` 在最多 `3` 条客户消息内判断
+   - `importer`
+   - `non_importer`
+   - 内部保留 `unknown`，但超时会路由到 `non_importer`
+4. 一旦判定完成，机器人停止继续聊天
+5. `importer`
+   - 发接管提示
+   - 触发本地通知或 webhook 通知
+   - 写入筛选日志 / 导出日志
+   - 可选回传 `Meta Dataset / CAPI`
+6. `non_importer`
+   - 发结束语
+   - 写入筛选日志 / 导出日志
+   - 可选回传 `Meta Dataset / CAPI`
+
+## 当前没有内置的东西
+
+- 不直接写 Google Sheets API
+- 不直接写 HubSpot / CRM SDK
+- 不自动建 Meta 广告
+
+这版通过 `LEAD_EXPORT_WEBHOOK_URL` 把结构化线索推给外部：
+
+- Google Apps Script
+- n8n
+- Make
+- 自己的 CRM webhook
+
+## 目录
+
+- [server.js](/Users/a93775/Documents/Playground/whatsapp_ai_workflow/free_local_rule_based/server.js)
+- [.env.example](/Users/a93775/Documents/Playground/whatsapp_ai_workflow/free_local_rule_based/.env.example)
+- [data/](/Users/a93775/Documents/Playground/whatsapp_ai_workflow/free_local_rule_based/data)
+
+## 关键环境变量
+
+```env
+PORT=8787
+VERIFY_TOKEN=replace_with_your_webhook_verify_token
+WHATSAPP_ACCESS_TOKEN=replace_with_your_whatsapp_access_token
+WHATSAPP_PHONE_NUMBER_ID=replace_with_your_phone_number_id
+GRAPH_API_VERSION=v23.0
+
+AI_PROVIDER=claude
+ANTHROPIC_API_KEY=replace_with_your_anthropic_api_key
+ANTHROPIC_MODEL=claude-haiku-4-5-20251001
+
+MAX_SCREENING_INBOUND_MESSAGES=3
+MAX_SCREENING_PROMPTS=2
+ENABLE_CATALOG_AUTOSEND=false
+
+LEAD_EXPORT_WEBHOOK_URL=
+TAKEOVER_ALERT_WEBHOOK_URL=
+
+META_DATASET_ID=
+META_CAPI_TOKEN=
+META_GRAPH_API_VERSION=v23.0
+```
+
+## 本地启动
+
+```bash
+cp .env.example .env
+node server.js
+```
+
+启动后会监听：
+
+- `GET /health`
+- `GET /webhook`
+- `POST /webhook`
+
+## Railway 部署
+
+这份目录已经适合直接作为独立仓库部署到 Railway。
+
+推荐步骤：
+
+1. 把这个目录单独推到 GitHub
+2. Railway 选择 `GitHub Repository`
+3. 选这个仓库
+4. 在 Railway `Variables` 里填 `.env` 里的值
+5. 如果要保留本地日志，给 `data/` 挂 `Volume`
+
+## 导出记录格式
+
+无论有没有外部 webhook，程序都会把导出结果写到：
+
+- `data/exports.ndjson`
+
+每条记录都会带这些核心字段：
+
+- `wa_id`
+- `profile_name`
+- `language`
+- `country_guess`
+- `buyer_type`
+- `lead_status`
+- `routing_bucket`
+- `decision_reason`
+- `first_3_messages`
+
+如果配置了 `LEAD_EXPORT_WEBHOOK_URL`，同一份 JSON 也会被 `POST` 到那个地址。
+
+## 接管通知
+
+`importer` 触发后：
+
+- 本机会弹系统通知
+- 如果配置了 `TAKEOVER_ALERT_WEBHOOK_URL`，还会额外发 webhook
+
+## 建议的下一步
+
+1. 接一个 `Google Apps Script` webhook，把导出写进 Google Sheets
+2. 接一个 `Telegram / Slack / ntfy` webhook，做 importer 接管提醒
+3. 补广告来源字段，再把高低质量名单回传 Meta
