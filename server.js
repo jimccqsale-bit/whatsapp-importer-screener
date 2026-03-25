@@ -372,14 +372,10 @@ server.listen(PORT, () => {
       `Loaded ${existingCustomerWaIds.size} existing customer WhatsApp IDs.`
     );
   }
-  if (autoMutedWaIds.size > 0) {
-    console.log(`Loaded ${autoMutedWaIds.size} auto-muted WhatsApp IDs.`);
-  }
-  if (historicalConversationWaIds.size > 0) {
-    console.log(
-      `Loaded ${historicalConversationWaIds.size} historical conversation WhatsApp IDs (threshold: ${HISTORICAL_INBOUND_SKIP_THRESHOLD}).`
-    );
-  }
+  console.log(`Loaded ${autoMutedWaIds.size} auto-muted WhatsApp IDs.`);
+  console.log(
+    `Loaded ${historicalConversationWaIds.size} historical conversation WhatsApp IDs (threshold: ${HISTORICAL_INBOUND_SKIP_THRESHOLD}).`
+  );
 });
 
 function loadEnv(filePath) {
