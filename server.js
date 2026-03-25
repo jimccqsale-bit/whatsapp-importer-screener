@@ -12,6 +12,7 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "";
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || "";
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "";
 const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || "v23.0";
+const AUTOMATION_PAUSED = true;
 
 const COMPANY_DISPLAY_NAME =
   process.env.COMPANY_DISPLAY_NAME || "YZ Spare Parts";
@@ -334,6 +335,10 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/webhook") {
       const body = await readJson(req);
+      if (AUTOMATION_PAUSED) {
+        console.warn("Automation paused: acknowledging webhook without processing.");
+        return json(res, 200, { received: true, count: 0, paused: true });
+      }
       const events = extractInboundMessages(body);
 
       for (const event of events) {
@@ -353,6 +358,9 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`WhatsApp lead screener listening on http://localhost:${PORT}`);
   console.log("Webhook verify path: /webhook");
+  if (AUTOMATION_PAUSED) {
+    console.warn("WARNING: automation is paused; inbound webhooks will be acknowledged but ignored.");
+  }
   if (existingCustomerWaIds.size === 0) {
     console.warn(
       "WARNING: no existing customer WhatsApp IDs loaded; old customers will not bypass auto-replies."
