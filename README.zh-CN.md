@@ -50,6 +50,7 @@ VERIFY_TOKEN=replace_with_your_webhook_verify_token
 WHATSAPP_ACCESS_TOKEN=replace_with_your_whatsapp_access_token
 WHATSAPP_PHONE_NUMBER_ID=replace_with_your_phone_number_id
 GRAPH_API_VERSION=v23.0
+AUTOMATION_PAUSED=true
 
 AI_PROVIDER=claude
 ANTHROPIC_API_KEY=replace_with_your_anthropic_api_key
@@ -82,6 +83,11 @@ node server.js
 - `GET /webhook`
 - `POST /webhook`
 
+默认 `AUTOMATION_PAUSED=true`。
+
+- 这表示 webhook 会收到并确认请求，但不会处理，也不会自动发消息
+- 只有你明确把 `AUTOMATION_PAUSED=false`，才会真正进入自动筛选/自动回复流程
+
 ## Railway 部署
 
 这份目录已经适合直接作为独立仓库部署到 Railway。
@@ -94,6 +100,7 @@ node server.js
 4. 在 Railway `Variables` 里填 `.env` 里的值
 5. 至少设置 `EXISTING_CUSTOMER_WA_IDS`，把绝不能触达的老客号码以逗号分隔方式放进去
 6. 如果要保留筛选后自动静音名单和本地日志，给 `data/` 挂 `Volume`
+7. 准备真正上线前，再把 `AUTOMATION_PAUSED=false`
 
 ## 免打扰规则
 

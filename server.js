@@ -12,7 +12,9 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "";
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || "";
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "";
 const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || "v23.0";
-const AUTOMATION_PAUSED = true;
+const AUTOMATION_PAUSED = !/^(0|false|no)$/i.test(
+  process.env.AUTOMATION_PAUSED || process.env.EMERGENCY_STOP || "true"
+);
 
 const COMPANY_DISPLAY_NAME =
   process.env.COMPANY_DISPLAY_NAME || "YZ Spare Parts";
