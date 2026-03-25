@@ -383,13 +383,31 @@ function extractInboundMessages(payload) {
 
   for (const entry of entries) {
     for (const change of entry.changes || []) {
+      // In coexistence mode, Meta can send non-customer events such as
+      // `smb_message_echoes` (messages manually sent from the Business app)
+      // and `history`. We only want fresh inbound customer chat messages.
+      if (change.field !== "messages") {
+        continue;
+      }
+
       const value = change.value || {};
       const contacts = value.contacts || [];
       const messages = value.messages || [];
       const profileName = contacts[0]?.profile?.name || "";
+      const displayPhoneNumber = normalizePhoneIdentifier(
+        value.metadata?.display_phone_number || ""
+      );
 
       for (const message of messages) {
         if (!message.from) continue;
+
+        const from = normalizePhoneIdentifier(message.from);
+
+        // Ignore app-originated echoes and other non-inbound payloads.
+        if (message.to || (displayPhoneNumber && from === displayPhoneNumber)) {
+          continue;
+        }
+
         out.push({
           kind: "inbound",
           messageId: String(message.id || ""),
@@ -405,6 +423,10 @@ function extractInboundMessages(payload) {
   }
 
   return out;
+}
+
+function normalizePhoneIdentifier(value) {
+  return String(value || "").replace(/[^\d]/g, "");
 }
 
 function extractMessageText(message) {
