@@ -11,12 +11,14 @@
    - `non_importer`
    - 内部保留 `unknown`，但超时会路由到 `non_importer`
 4. 一旦判定完成，机器人停止继续聊天
-5. `importer`
+5. 已经过筛选的联系人后续自动静音，不再重复进入机器人流程
+6. 历史入站消息达到阈值的联系人可自动旁路，避免误触达老客或长聊联系人
+7. `importer`
    - 发接管提示
    - 触发本地通知或 webhook 通知
    - 写入筛选日志 / 导出日志
    - 可选回传 `Meta Dataset / CAPI`
-6. `non_importer`
+8. `non_importer`
    - 发结束语
    - 写入筛选日志 / 导出日志
    - 可选回传 `Meta Dataset / CAPI`
@@ -56,6 +58,8 @@ ANTHROPIC_MODEL=claude-haiku-4-5-20251001
 MAX_SCREENING_INBOUND_MESSAGES=3
 MAX_SCREENING_PROMPTS=2
 ENABLE_CATALOG_AUTOSEND=false
+HISTORICAL_INBOUND_SKIP_THRESHOLD=3
+AUTO_MUTE_AFTER_SCREENING=true
 
 LEAD_EXPORT_WEBHOOK_URL=
 TAKEOVER_ALERT_WEBHOOK_URL=
@@ -88,7 +92,20 @@ node server.js
 2. Railway 选择 `GitHub Repository`
 3. 选这个仓库
 4. 在 Railway `Variables` 里填 `.env` 里的值
-5. 如果要保留本地日志，给 `data/` 挂 `Volume`
+5. 至少设置 `EXISTING_CUSTOMER_WA_IDS`，把绝不能触达的老客号码以逗号分隔方式放进去
+6. 如果要保留筛选后自动静音名单和本地日志，给 `data/` 挂 `Volume`
+
+## 免打扰规则
+
+默认会旁路自动回复的联系人包括：
+
+- `EXISTING_CUSTOMER_WA_IDS` 或 `existing-customers.txt` 里的号码
+- 已经完成过筛选的联系人
+- 历史入站消息数达到 `HISTORICAL_INBOUND_SKIP_THRESHOLD` 的联系人
+
+如果你不想“筛选完自动静音”，可以把：
+
+- `AUTO_MUTE_AFTER_SCREENING=false`
 
 ## 导出记录格式
 

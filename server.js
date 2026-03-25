@@ -60,9 +60,18 @@ const STATE_PATH =
 const EXISTING_CUSTOMER_LIST_PATH =
   process.env.EXISTING_CUSTOMER_LIST_PATH ||
   path.join(__dirname, "data", "existing-customers.txt");
+const AUTO_MUTED_CONTACTS_PATH =
+  process.env.AUTO_MUTED_CONTACTS_PATH ||
+  path.join(__dirname, "data", "auto-muted-contacts.txt");
 const LEAD_EXPORT_WEBHOOK_URL = process.env.LEAD_EXPORT_WEBHOOK_URL || "";
 const TAKEOVER_ALERT_WEBHOOK_URL =
   process.env.TAKEOVER_ALERT_WEBHOOK_URL || "";
+const HISTORICAL_INBOUND_SKIP_THRESHOLD = Number(
+  process.env.HISTORICAL_INBOUND_SKIP_THRESHOLD || 3
+);
+const AUTO_MUTE_AFTER_SCREENING = !/^(0|false|no)$/i.test(
+  process.env.AUTO_MUTE_AFTER_SCREENING || "true"
+);
 
 const META_DATASET_ID = process.env.META_DATASET_ID || "";
 const META_CAPI_TOKEN = process.env.META_CAPI_TOKEN || "";
@@ -85,6 +94,7 @@ ensureDir(path.dirname(META_EVENT_LOG_PATH));
 ensureDir(path.dirname(EXPORT_LOG_PATH));
 ensureDir(path.dirname(STATE_PATH));
 ensureDir(path.dirname(EXISTING_CUSTOMER_LIST_PATH));
+ensureDir(path.dirname(AUTO_MUTED_CONTACTS_PATH));
 
 const supportedLanguages = new Set([
   "ar",
@@ -265,6 +275,14 @@ const existingCustomerWaIds = loadExistingCustomers(
   EXISTING_CUSTOMER_LIST_PATH,
   process.env.EXISTING_CUSTOMER_WA_IDS || ""
 );
+const autoMutedWaIds = loadWaIdList(
+  AUTO_MUTED_CONTACTS_PATH,
+  process.env.AUTO_MUTED_WA_IDS || ""
+);
+const historicalConversationWaIds = loadHistoricalConversationWaIds(
+  LEAD_LOG_PATH,
+  HISTORICAL_INBOUND_SKIP_THRESHOLD
+);
 const processedMessageIds = new Map();
 const contactQueues = new Map();
 const scheduledTimers = new Map();
@@ -342,6 +360,14 @@ server.listen(PORT, () => {
   } else {
     console.log(
       `Loaded ${existingCustomerWaIds.size} existing customer WhatsApp IDs.`
+    );
+  }
+  if (autoMutedWaIds.size > 0) {
+    console.log(`Loaded ${autoMutedWaIds.size} auto-muted WhatsApp IDs.`);
+  }
+  if (historicalConversationWaIds.size > 0) {
+    console.log(
+      `Loaded ${historicalConversationWaIds.size} historical conversation WhatsApp IDs (threshold: ${HISTORICAL_INBOUND_SKIP_THRESHOLD}).`
     );
   }
 });
@@ -486,8 +512,12 @@ async function processLeadEvent(event) {
     leadState[event.waId] || createLeadState()
   );
 
-  if (isExistingCustomer(event.waId)) {
-    previousState.existingCustomer = true;
+  const bypassReason = getAutomationBypassReason(event.waId);
+
+  if (bypassReason) {
+    if (bypassReason === "existing_customer") {
+      previousState.existingCustomer = true;
+    }
     previousState.screeningComplete = true;
     previousState.lastInboundText = event.text || "";
     previousState.lastInboundMessageId = event.messageId || "";
@@ -504,10 +534,16 @@ async function processLeadEvent(event) {
       language: previousState.language || guessCountryAndLanguage(event.waId).language,
       company_name: previousState.companyName || "",
       buyer_type: previousState.buyerType || "unknown",
-      lead_status: "existing_customer_skip",
+      lead_status:
+        bypassReason === "existing_customer"
+          ? "existing_customer_skip"
+          : "automation_bypass_skip",
       incoming_text: event.text,
       reply_text: "",
-      reply_engine: "skip_existing_customer"
+      reply_engine:
+        bypassReason === "existing_customer"
+          ? "skip_existing_customer"
+          : `skip_${bypassReason}`
     });
     return;
   }
@@ -985,6 +1021,9 @@ async function handleQualifiedLead(lead, previousState) {
 
   leadState[lead.waId] = state;
   saveState(STATE_PATH, leadState);
+  if (AUTO_MUTE_AFTER_SCREENING) {
+    muteContact(lead.waId);
+  }
 
   const finalizedLead = {
     ...lead,
@@ -1032,6 +1071,9 @@ async function handleDisqualifiedLead(lead, previousState) {
 
   leadState[lead.waId] = state;
   saveState(STATE_PATH, leadState);
+  if (AUTO_MUTE_AFTER_SCREENING) {
+    muteContact(lead.waId);
+  }
 
   const finalizedLead = {
     ...lead,
@@ -1590,6 +1632,10 @@ function sanitizeLeadState(state) {
 }
 
 function loadExistingCustomers(filePath, inlineValue) {
+  return loadWaIdList(filePath, inlineValue);
+}
+
+function loadWaIdList(filePath, inlineValue) {
   const values = [];
 
   if (inlineValue) {
@@ -1604,12 +1650,60 @@ function loadExistingCustomers(filePath, inlineValue) {
   return new Set(values.map(normalizeWaId).filter(Boolean));
 }
 
+function loadHistoricalConversationWaIds(logPath, threshold) {
+  const limit = Math.max(1, Number(threshold || 0));
+  const counts = new Map();
+
+  if (!fs.existsSync(logPath)) {
+    return new Set();
+  }
+
+  const content = fs.readFileSync(logPath, "utf8");
+  for (const line of content.split(/\r?\n/)) {
+    const text = line.trim();
+    if (!text) continue;
+
+    try {
+      const record = JSON.parse(text);
+      const waId = normalizeWaId(record.wa_id);
+      const hasInboundText = Boolean(String(record.incoming_text || "").trim());
+      if (!waId || !hasInboundText) continue;
+
+      counts.set(waId, Number(counts.get(waId) || 0) + 1);
+    } catch (_) {
+      continue;
+    }
+  }
+
+  return new Set(
+    Array.from(counts.entries())
+      .filter(([, count]) => count >= limit)
+      .map(([waId]) => waId)
+  );
+}
+
 function normalizeWaId(value) {
   return String(value || "").replace(/[^\d]/g, "").trim();
 }
 
 function isExistingCustomer(waId) {
   return existingCustomerWaIds.has(normalizeWaId(waId));
+}
+
+function getAutomationBypassReason(waId) {
+  const normalized = normalizeWaId(waId);
+  if (!normalized) return "";
+  if (existingCustomerWaIds.has(normalized)) return "existing_customer";
+  if (autoMutedWaIds.has(normalized)) return "screened_contact";
+  if (historicalConversationWaIds.has(normalized)) return "historical_chat_limit";
+  return "";
+}
+
+function muteContact(waId) {
+  const normalized = normalizeWaId(waId);
+  if (!normalized || autoMutedWaIds.has(normalized)) return;
+  autoMutedWaIds.add(normalized);
+  fs.appendFileSync(AUTO_MUTED_CONTACTS_PATH, `${normalized}\n`, "utf8");
 }
 
 function isDuplicateMessage(messageId) {
