@@ -648,8 +648,11 @@ function analyzeHeuristically(event, previousState = createLeadState()) {
     prefixGuess.country
   );
   const intent = detectIntent(event.text);
+  const lastScreeningPromptKey =
+    previousState.lastScreeningPromptKey ||
+    (previousState.importerAskedAt ? "importer_question" : "");
   const buyerType =
-    detectBuyerType(event.text, previousState.importerAskedAt ? "importer_question" : "") ||
+    detectBuyerType(event.text, lastScreeningPromptKey) ||
     previousState.buyerType;
   const companyName = detectCompanyName(event.text) || previousState.companyName;
   const countryGuess =
@@ -676,8 +679,11 @@ async function analyzeWithClaude(event, previousState, heuristicLead) {
     "Classify the customer's buyer_type using only these values:",
     "importer, wholesaler, distributor, workshop, retail, non_importer, unknown",
     "Rules:",
-    "- importer only when the customer clearly says they are an importer or answers yes to an importer question.",
+    "- importer when the customer clearly says they are an importer or answers yes to an importer question.",
     "- non_importer when they clearly answer no to the importer question or clearly say they are not an importer.",
+    "- If the last screening prompt asked whether they buy for resale/business vs local retail/personal use, then answers like business, commercial, resale, wholesale, or trading mean importer.",
+    "- If the last screening prompt asked whether they buy for resale/business vs local retail/personal use, then answers like retail, local retail, personal use, or self-use mean non_importer.",
+    "- The intro message that asks whether they are an importer counts as an importer question.",
     "- If unclear, keep unknown.",
     "- wants_catalog should be true if the customer asks for a catalog, brochure, website, or product list.",
     "- asked_identity should be true if the customer asks who you are or what company this is.",
@@ -693,7 +699,8 @@ async function analyzeWithClaude(event, previousState, heuristicLead) {
         previous_state: {
           language: previousState.language || "",
           buyer_type: previousState.buyerType || "unknown",
-          importer_question_already_sent: Boolean(previousState.importerAskedAt)
+          importer_question_already_sent: Boolean(previousState.importerAskedAt),
+          last_screening_prompt_key: previousState.lastScreeningPromptKey || ""
         },
         inbound: {
           profile_name: event.profileName || "",
@@ -805,6 +812,10 @@ async function startLeadSequence(lead) {
     });
     state.sentIntroAt = new Date().toISOString();
     state.sequenceStartedAt = state.sequenceStartedAt || state.sentIntroAt;
+    // The intro doubles as the first importer question, so plain "yes" responses
+    // should be interpreted in that context.
+    state.importerAskedAt = state.importerAskedAt || state.sentIntroAt;
+    state.lastScreeningPromptKey = "importer_question";
     state.lastBotReply = t.intro;
     state.screeningPromptCount = 1;
   }
@@ -871,6 +882,7 @@ async function sendImporterQuestionStep(waId, language, reason) {
   });
 
   state.importerAskedAt = new Date().toISOString();
+  state.lastScreeningPromptKey = "importer_question";
   state.lastBotReply = t.importerQuestion;
   state.lastLeadStatus = "need_more_info";
   state.screeningPromptCount = Math.max(
@@ -904,6 +916,7 @@ async function sendClarifyQuestionStep(waId, language, reason) {
   });
 
   state.lastBotReply = t.clarify || t.importerQuestion;
+  state.lastScreeningPromptKey = "clarify";
   state.lastLeadStatus = "need_more_info";
   state.screeningPromptCount = Number(state.screeningPromptCount || 0) + 1;
   leadState[waId] = state;
@@ -1129,23 +1142,44 @@ function detectCatalogRequest(text) {
 function detectBuyerType(text, lastPromptKey = "") {
   const value = String(text || "");
   const compact = value.trim().toLowerCase();
+  const askedImporterQuestion =
+    lastPromptKey === "importer_question" || lastPromptKey === "intro_importer";
+  const askedClarifyQuestion = lastPromptKey === "clarify";
 
   if (
     /(importer|importador|importadora|импортер|импорт|进口商|进口)/i.test(value) ||
-    (lastPromptKey === "importer_question" &&
+    (askedImporterQuestion &&
       /^(yes|y|sí|si|sim|да|oui|是|对|是的|import|importer)$/i.test(compact))
   ) {
     return "importer";
   }
 
   if (
-    (lastPromptKey === "importer_question" &&
+    (askedImporterQuestion &&
       /^(no|n|нет|не|不是|不|nao|não|nope|non)$/i.test(compact)) ||
     /(not importer|non importer|no importador|não importador|不是进口商)/i.test(
       value
     )
   ) {
     return "non_importer";
+  }
+
+  if (
+    askedClarifyQuestion &&
+    /(business|commercial|resale|re[- ]?sale|wholesale|trade|trading|for business|business use|commercial use|批发|转售|商业用途|商用|贸易|生意)/i.test(
+      value
+    )
+  ) {
+    return "importer";
+  }
+
+  if (
+    askedClarifyQuestion &&
+    /(retail|local retail|personal|personal use|self use|self-use|local use|零售|个人|自用|本地零售)/i.test(
+      value
+    )
+  ) {
+    return "retail";
   }
 
   if (/(wholesaler|mayorista|atacadista|grossiste|оптов)/i.test(value)) {
@@ -1511,6 +1545,7 @@ function createLeadState() {
     lastUpdatedAt: "",
     inboundCount: 0,
     screeningPromptCount: 0,
+    lastScreeningPromptKey: "",
     routingBucket: "",
     decisionReason: ""
   };
