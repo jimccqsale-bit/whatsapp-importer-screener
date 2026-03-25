@@ -632,6 +632,15 @@ async function processLeadEvent(event) {
     return;
   }
 
+  if (shouldRepeatImporterQuestion(lead, previousState)) {
+    await sendImporterQuestionReminderStep(
+      lead.waId,
+      lead.language,
+      "screening_importer_repeat"
+    );
+    return;
+  }
+
   if (shouldForceScreeningDecision(lead.state)) {
     await handleTimedOutLead(lead, previousState);
     return;
@@ -758,8 +767,10 @@ async function analyzeWithClaude(event, previousState, heuristicLead) {
     "Rules:",
     "- importer when the customer clearly says they are an importer or answers yes to an importer question.",
     "- non_importer when they clearly answer no to the importer question or clearly say they are not an importer.",
+    "- If the customer only sends a greeting or small talk such as hello or how are you, and they do not answer the screening question, keep buyer_type as unknown.",
     "- If the last screening prompt asked whether they buy for resale/business vs local retail/personal use, then answers like business, commercial, resale, wholesale, or trading mean importer.",
     "- If the last screening prompt asked whether they buy for resale/business vs local retail/personal use, then answers like retail, local retail, personal use, or self-use mean non_importer.",
+    "- If the last screening prompt asked whether they buy for resale/business vs local retail/personal use, then a bare affirmative such as yes, sure, of course, or certainly should not be treated as non_importer. Prefer importer when the earlier context was confirming importer status.",
     "- The intro message that asks whether they are an importer counts as an importer question.",
     "- If unclear, keep unknown.",
     "- wants_catalog should be true if the customer asks for a catalog, brochure, website, or product list.",
@@ -966,6 +977,38 @@ async function sendImporterQuestionStep(waId, language, reason) {
     Number(state.screeningPromptCount || 0),
     1
   );
+  leadState[waId] = state;
+  saveState(STATE_PATH, leadState);
+}
+
+async function sendImporterQuestionReminderStep(waId, language, reason) {
+  const state = sanitizeLeadState(leadState[waId] || createLeadState());
+  if (
+    state.screeningComplete ||
+    state.existingCustomer ||
+    Number(state.screeningPromptCount || 0) >= MAX_SCREENING_PROMPTS
+  ) {
+    return;
+  }
+
+  const t = getTemplates(language || state.language || "en");
+  await sendAndRecordMessage(waId, t.importerQuestion, {
+    direction: "outbound",
+    reply_engine: reason,
+    language: language || state.language || "en",
+    country_guess: state.country || guessCountryAndLanguage(waId).country,
+    company_name: state.companyName || "",
+    buyer_type: state.buyerType || "unknown",
+    lead_status: "need_more_info",
+    profile_name: state.profileName || ""
+  });
+
+  state.importerAskedAt = state.importerAskedAt || new Date().toISOString();
+  state.lastImporterReminderAt = new Date().toISOString();
+  state.lastScreeningPromptKey = "importer_question";
+  state.lastBotReply = t.importerQuestion;
+  state.lastLeadStatus = "need_more_info";
+  state.screeningPromptCount = Number(state.screeningPromptCount || 0) + 1;
   leadState[waId] = state;
   saveState(STATE_PATH, leadState);
 }
@@ -1213,6 +1256,9 @@ function detectIntent(text) {
   if (/(hello|hi|hey|good morning|good afternoon|hola|ol[aá]|bonjour|привет|здравствуйте|سلام|你好)/i.test(value)) {
     return "greeting";
   }
+  if (/(how are you|how are u|how r you|how're you|how do you do|what'?s up|que tal|cómo estás|como estas|как дела|你好吗|最近怎么样|还好吗)/i.test(value)) {
+    return "smalltalk";
+  }
   return "info";
 }
 
@@ -1228,18 +1274,19 @@ function detectBuyerType(text, lastPromptKey = "") {
   const askedImporterQuestion =
     lastPromptKey === "importer_question" || lastPromptKey === "intro_importer";
   const askedClarifyQuestion = lastPromptKey === "clarify";
+  const affirmativeReply = isAffirmativeReply(compact);
+  const negativeReply = isNegativeReply(compact);
 
   if (
     /(importer|importador|importadora|импортер|импорт|进口商|进口)/i.test(value) ||
-    (askedImporterQuestion &&
-      /^(yes|y|sí|si|sim|да|oui|是|对|是的|import|importer)$/i.test(compact))
+    (askedImporterQuestion && affirmativeReply) ||
+    (askedClarifyQuestion && affirmativeReply)
   ) {
     return "importer";
   }
 
   if (
-    (askedImporterQuestion &&
-      /^(no|n|нет|не|不是|不|nao|não|nope|non)$/i.test(compact)) ||
+    ((askedImporterQuestion || askedClarifyQuestion) && negativeReply) ||
     /(not importer|non importer|no importador|não importador|不是进口商)/i.test(
       value
     )
@@ -1278,6 +1325,18 @@ function detectBuyerType(text, lastPromptKey = "") {
     return "retail";
   }
   return "unknown";
+}
+
+function isAffirmativeReply(value) {
+  return /^(yes|y|yeah|yep|yes sure|sure|sure yes|of course|certainly|definitely|absolutely|affirmative|oui|bien sur|bien sûr|sí|si|sí claro|si claro|sim|да|да конечно|конечно|是|对|是的|当然|当然是|可以)$/i.test(
+    String(value || "").trim()
+  );
+}
+
+function isNegativeReply(value) {
+  return /^(no|n|nope|nah|нет|не|non|nao|não|不是|不|not really)$/i.test(
+    String(value || "").trim()
+  );
 }
 
 function detectCountry(text) {
@@ -1372,6 +1431,20 @@ function shouldForceScreeningDecision(state) {
     Number(state.inboundCount || 0) >= MAX_SCREENING_INBOUND_MESSAGES ||
     Number(state.screeningPromptCount || 0) >= MAX_SCREENING_PROMPTS
   );
+}
+
+function shouldRepeatImporterQuestion(lead, previousState) {
+  if (!lead || lead.buyerType !== "unknown") return false;
+  if (Number(previousState.screeningPromptCount || 0) >= MAX_SCREENING_PROMPTS) {
+    return false;
+  }
+
+  const lastPromptKey = previousState.lastScreeningPromptKey || "";
+  if (!["importer_question", "intro_importer"].includes(lastPromptKey)) {
+    return false;
+  }
+
+  return ["greeting", "smalltalk", "ask_identity"].includes(lead.intent);
 }
 
 async function sendAndRecordMessage(waId, body, meta = {}) {
