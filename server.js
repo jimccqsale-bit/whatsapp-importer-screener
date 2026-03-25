@@ -335,6 +335,15 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`WhatsApp lead screener listening on http://localhost:${PORT}`);
   console.log("Webhook verify path: /webhook");
+  if (existingCustomerWaIds.size === 0) {
+    console.warn(
+      "WARNING: no existing customer WhatsApp IDs loaded; old customers will not bypass auto-replies."
+    );
+  } else {
+    console.log(
+      `Loaded ${existingCustomerWaIds.size} existing customer WhatsApp IDs.`
+    );
+  }
 });
 
 function loadEnv(filePath) {
