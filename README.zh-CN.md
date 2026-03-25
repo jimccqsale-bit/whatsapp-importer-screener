@@ -64,6 +64,9 @@ AUTO_MUTE_AFTER_SCREENING=true
 
 LEAD_EXPORT_WEBHOOK_URL=
 TAKEOVER_ALERT_WEBHOOK_URL=
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+TELEGRAM_MESSAGE_THREAD_ID=
 
 META_DATASET_ID=
 META_CAPI_TOKEN=
@@ -139,7 +142,17 @@ node server.js
 `importer` 触发后：
 
 - 本机会弹系统通知
+- 如果配置了 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID`，会给你的 Telegram 发一条“新精准客户需要接管”的提醒
+- 如果你用的是 Telegram 群组话题，还可以额外配置 `TELEGRAM_MESSAGE_THREAD_ID`
 - 如果配置了 `TAKEOVER_ALERT_WEBHOOK_URL`，还会额外发 webhook
+
+Telegram 提醒内容会包含：
+
+- 联系人名 / WhatsApp 号码
+- 语言和国家猜测
+- buyer type
+- 最新一条客户消息
+- 前 3 条客户消息摘要
 
 ## 建议的下一步
 

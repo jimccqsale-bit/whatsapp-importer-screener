@@ -69,6 +69,10 @@ const AUTO_MUTED_CONTACTS_PATH =
 const LEAD_EXPORT_WEBHOOK_URL = process.env.LEAD_EXPORT_WEBHOOK_URL || "";
 const TAKEOVER_ALERT_WEBHOOK_URL =
   process.env.TAKEOVER_ALERT_WEBHOOK_URL || "";
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
+const TELEGRAM_MESSAGE_THREAD_ID =
+  process.env.TELEGRAM_MESSAGE_THREAD_ID || "";
 const HISTORICAL_INBOUND_SKIP_THRESHOLD = Number(
   process.env.HISTORICAL_INBOUND_SKIP_THRESHOLD || 3
 );
@@ -1776,6 +1780,14 @@ async function notifyTakeover(lead) {
     );
   }
 
+  if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
+    try {
+      await sendTelegramTakeoverAlert(lead, { title, subtitle, message });
+    } catch (error) {
+      console.error("Telegram takeover alert failed:", error.message);
+    }
+  }
+
   if (!TAKEOVER_ALERT_WEBHOOK_URL) return;
 
   try {
@@ -1801,4 +1813,61 @@ async function notifyTakeover(lead) {
   } catch (error) {
     console.error("Takeover alert webhook failed:", error.message);
   }
+}
+
+async function sendTelegramTakeoverAlert(lead, payload) {
+  const leadSummary = buildLeadSummary(lead, lead.leadStatus || "qualified");
+  const lines = [
+    "<b>New qualified importer needs takeover</b>",
+    "",
+    `<b>Contact</b>: ${escapeTelegramHtml(payload.subtitle)}`,
+    `<b>Language / Country</b>: ${escapeTelegramHtml(
+      `${lead.language.toUpperCase()} / ${lead.countryGuess || "Unknown"}`
+    )}`,
+    `<b>Buyer Type</b>: ${escapeTelegramHtml(lead.buyerType || "importer")}`,
+    `<b>Last Message</b>: ${escapeTelegramHtml(
+      lead.text || lead.state?.lastInboundText || "-"
+    )}`,
+    `<b>First 3 Messages</b>: ${escapeTelegramHtml(
+      leadSummary.first_3_messages || "-"
+    )}`,
+    "",
+    "Please take over this WhatsApp conversation now."
+  ];
+
+  const body = {
+    chat_id: TELEGRAM_CHAT_ID,
+    text: lines.join("\n"),
+    parse_mode: "HTML",
+    disable_web_page_preview: true
+  };
+
+  if (TELEGRAM_MESSAGE_THREAD_ID) {
+    body.message_thread_id = Number(TELEGRAM_MESSAGE_THREAD_ID);
+  }
+
+  const response = await fetch(
+    `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `Telegram sendMessage failed: ${response.status} ${errorText.slice(0, 400)}`
+    );
+  }
+}
+
+function escapeTelegramHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
