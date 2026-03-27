@@ -79,6 +79,9 @@ const HISTORICAL_INBOUND_SKIP_THRESHOLD = Number(
 const AUTO_MUTE_AFTER_SCREENING = !/^(0|false|no)$/i.test(
   process.env.AUTO_MUTE_AFTER_SCREENING || "true"
 );
+const ONLY_PROCESS_AD_REFERRAL_LEADS = /^(1|true|yes)$/i.test(
+  process.env.ONLY_PROCESS_AD_REFERRAL_LEADS || "false"
+);
 
 const META_DATASET_ID = process.env.META_DATASET_ID || "";
 const META_CAPI_TOKEN = process.env.META_CAPI_TOKEN || "";
@@ -461,13 +464,32 @@ function extractInboundMessages(payload) {
           type: message.type || "unknown",
           text: extractMessageText(message),
           hasImage: message.type === "image",
-          hasDocument: message.type === "document"
+          hasDocument: message.type === "document",
+          referral: extractReferralDetails(message)
         });
       }
     }
   }
 
   return out;
+}
+
+function extractReferralDetails(message) {
+  const referral = message?.referral;
+  if (!referral || typeof referral !== "object") {
+    return null;
+  }
+
+  const details = {
+    sourceType: clampText(referral.source_type, 40),
+    sourceId: clampText(referral.source_id, 80),
+    sourceUrl: clampText(referral.source_url, 500),
+    headline: clampText(referral.headline, 120),
+    body: clampText(referral.body, 280),
+    ctwaClid: clampText(referral.ctwa_clid, 120)
+  };
+
+  return Object.values(details).some(Boolean) ? details : null;
 }
 
 function normalizePhoneIdentifier(value) {
@@ -522,13 +544,19 @@ async function processLeadEvent(event) {
     leadState[event.waId] || createLeadState()
   );
 
-  const bypassReason = getAutomationBypassReason(event.waId);
+  const bypassReason = getAutomationBypassReason(
+    event.waId,
+    previousState,
+    event
+  );
 
   if (bypassReason) {
     if (bypassReason === "existing_customer") {
       previousState.existingCustomer = true;
     }
-    previousState.screeningComplete = true;
+    if (bypassReason !== "non_ad_referral") {
+      previousState.screeningComplete = true;
+    }
     previousState.lastInboundText = event.text || "";
     previousState.lastInboundMessageId = event.messageId || "";
     previousState.lastUpdatedAt = new Date().toISOString();
@@ -544,15 +572,22 @@ async function processLeadEvent(event) {
       language: previousState.language || guessCountryAndLanguage(event.waId).language,
       company_name: previousState.companyName || "",
       buyer_type: previousState.buyerType || "unknown",
+      lead_source: previousState.leadSource || "unknown",
+      referral_source_id: previousState.referralSourceId || "",
+      ctwa_clid: previousState.ctwaClid || "",
       lead_status:
         bypassReason === "existing_customer"
           ? "existing_customer_skip"
+          : bypassReason === "non_ad_referral"
+            ? "non_ad_referral_skip"
           : "automation_bypass_skip",
       incoming_text: event.text,
       reply_text: "",
       reply_engine:
         bypassReason === "existing_customer"
           ? "skip_existing_customer"
+          : bypassReason === "non_ad_referral"
+            ? "skip_non_ad_referral"
           : `skip_${bypassReason}`
     });
     return;
@@ -611,6 +646,9 @@ async function processLeadEvent(event) {
     language: lead.language,
     company_name: lead.companyName,
     buyer_type: lead.buyerType,
+    lead_source: lead.leadSource || "unknown",
+    referral_source_id: lead.referralSourceId || "",
+    ctwa_clid: lead.ctwaClid || "",
     lead_status: lead.leadStatus,
     incoming_text: lead.text,
     reply_text: "",
@@ -715,6 +753,22 @@ async function analyzeLead(event, previousState = createLeadState()) {
     buyerType
   };
 
+  if (event.referral) {
+    state.adReferralSeen = true;
+    state.leadSource = "ad_referral";
+    state.referralSourceType =
+      event.referral.sourceType || state.referralSourceType || "";
+    state.referralSourceId =
+      event.referral.sourceId || state.referralSourceId || "";
+    state.referralSourceUrl =
+      event.referral.sourceUrl || state.referralSourceUrl || "";
+    state.referralHeadline =
+      event.referral.headline || state.referralHeadline || "";
+    state.ctwaClid = event.referral.ctwaClid || state.ctwaClid || "";
+  } else if (!state.leadSource) {
+    state.leadSource = "organic_or_unknown";
+  }
+
   return {
     waId: event.waId,
     profileName: event.profileName,
@@ -728,6 +782,11 @@ async function analyzeLead(event, previousState = createLeadState()) {
     askedIdentity,
     text: event.text,
     analysisEngine: aiLead ? "claude_api" : "heuristics",
+    leadSource: state.leadSource,
+    referralSourceType: state.referralSourceType,
+    referralSourceId: state.referralSourceId,
+    referralSourceUrl: state.referralSourceUrl,
+    ctwaClid: state.ctwaClid,
     state
   };
 }
@@ -1654,6 +1713,12 @@ function buildLeadSummary(lead, finalStatus) {
     language: lead.language || "",
     country_guess: lead.countryGuess || "",
     company_name: lead.companyName || "",
+    lead_source: lead.leadSource || lead.state?.leadSource || "unknown",
+    referral_source_type:
+      lead.referralSourceType || lead.state?.referralSourceType || "",
+    referral_source_id:
+      lead.referralSourceId || lead.state?.referralSourceId || "",
+    ctwa_clid: lead.ctwaClid || lead.state?.ctwaClid || "",
     buyer_type: lead.buyerType || "unknown",
     lead_status: finalStatus,
     routing_bucket:
@@ -1688,6 +1753,13 @@ function createLeadState() {
     language: "",
     country: "",
     companyName: "",
+    leadSource: "",
+    referralSourceType: "",
+    referralSourceId: "",
+    referralSourceUrl: "",
+    referralHeadline: "",
+    ctwaClid: "",
+    adReferralSeen: false,
     buyerType: "unknown",
     sentIntroAt: "",
     catalogSentAt: "",
@@ -1779,13 +1851,32 @@ function isExistingCustomer(waId) {
   return existingCustomerWaIds.has(normalizeWaId(waId));
 }
 
-function getAutomationBypassReason(waId) {
+function getAutomationBypassReason(waId, state = createLeadState(), event = null) {
   const normalized = normalizeWaId(waId);
   if (!normalized) return "";
   if (existingCustomerWaIds.has(normalized)) return "existing_customer";
   if (autoMutedWaIds.has(normalized)) return "screened_contact";
   if (historicalConversationWaIds.has(normalized)) return "historical_chat_limit";
+  if (
+    ONLY_PROCESS_AD_REFERRAL_LEADS &&
+    !state.adReferralSeen &&
+    !hasAdReferral(event)
+  ) {
+    return "non_ad_referral";
+  }
   return "";
+}
+
+function hasAdReferral(event) {
+  return Boolean(
+    event?.referral &&
+      (
+        event.referral.ctwaClid ||
+        event.referral.sourceId ||
+        event.referral.sourceUrl ||
+        event.referral.sourceType
+      )
+  );
 }
 
 function muteContact(waId) {

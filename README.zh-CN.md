@@ -61,6 +61,7 @@ MAX_SCREENING_PROMPTS=2
 ENABLE_CATALOG_AUTOSEND=false
 HISTORICAL_INBOUND_SKIP_THRESHOLD=3
 AUTO_MUTE_AFTER_SCREENING=true
+ONLY_PROCESS_AD_REFERRAL_LEADS=false
 
 LEAD_EXPORT_WEBHOOK_URL=
 TAKEOVER_ALERT_WEBHOOK_URL=
@@ -113,6 +114,13 @@ node server.js
 - 已经完成过筛选的联系人
 - 历史入站消息数达到 `HISTORICAL_INBOUND_SKIP_THRESHOLD` 的联系人
 
+如果你复用同一个 WhatsApp 号码，同时又有很多老客户，建议额外打开：
+
+- `ONLY_PROCESS_AD_REFERRAL_LEADS=true`
+
+打开后，只有首条入站里带 `WhatsApp Click-to-WhatsApp / referral` 广告来源信息的联系人才会进入自动筛选。
+普通自然消息、老客户回访、非广告来源的新消息会直接旁路，不会触发机器人自动回复。
+
 如果你不想“筛选完自动静音”，可以把：
 
 - `AUTO_MUTE_AFTER_SCREENING=false`
@@ -129,6 +137,9 @@ node server.js
 - `profile_name`
 - `language`
 - `country_guess`
+- `lead_source`
+- `referral_source_id`
+- `ctwa_clid`
 - `buyer_type`
 - `lead_status`
 - `routing_bucket`
