@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js"
+    "check": "node --check server.js",
+    "export:tables": "node scripts/export-meta-tables.js"
   },
   "engines": {
     "node": ">=20"

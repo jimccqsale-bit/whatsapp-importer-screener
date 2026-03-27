@@ -137,6 +137,25 @@ node server.js
 
 如果配置了 `LEAD_EXPORT_WEBHOOK_URL`，同一份 JSON 也会被 `POST` 到那个地址。
 
+如果你想直接拿两张给 `Facebook / Meta` 用的表，可以执行：
+
+```bash
+cd /Users/a93775/Documents/Playground/whatsapp_ai_workflow/free_local_rule_based
+npm run export:tables
+```
+
+生成结果会放在：
+
+- `data/facebook-exports/qualified-leads.csv`
+- `data/facebook-exports/non-qualified-leads.csv`
+- `data/facebook-exports/summary.json`
+
+规则是：
+
+- `qualified-leads.csv`：只保留 `lead_status=qualified`
+- `non-qualified-leads.csv`：只保留 `lead_status=low_quality`
+- 同一个 `wa_id` 如果重复出现，只保留最新一条
+
 ## 接管通知
 
 `importer` 触发后：

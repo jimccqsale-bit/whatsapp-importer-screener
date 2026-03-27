@@ -617,6 +617,12 @@ async function processLeadEvent(event) {
     reply_engine: lead.analysisEngine
   });
 
+  // Persist the latest inbound-derived state before branching into follow-up
+  // handlers. Otherwise helper functions that reload state from disk can
+  // accidentally overwrite this turn's updated counters/message history.
+  leadState[lead.waId] = sanitizeLeadState(lead.state);
+  saveState(STATE_PATH, leadState);
+
   if (lead.leadStatus === "qualified") {
     await handleQualifiedLead(lead, previousState);
     return;
