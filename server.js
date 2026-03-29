@@ -175,108 +175,108 @@ const templates = {
     intro:
       `مرحبا، أنا ${SALES_CONTACT_NAME} من ${COMPANY_DISPLAY_NAME}. لتوجيهك بشكل صحيح، هل أنت مستورد؟`,
     clarify:
-      "للتأكيد، هل تستورد لإعادة البيع التجاري أم تشتري للاستخدام المحلي أو الشخصي؟",
+      "للتأكيد، هل تقومون بالاستيراد المباشر بأنفسكم، أم تشترون من مستوردين محليين؟",
     catalog: `هذا هو كتالوجنا وموقعنا الإلكتروني: ${CATALOG_URL}`,
-    importerQuestion: "هل أنت مستورد؟",
+    importerQuestion: "هل أنتم مستورد مباشر؟",
     handoff:
       `شكرا لتأكيدك. سيتولى ${SALES_CONTACT_NAME} متابعة هذه المحادثة معك الآن.`,
     nonImporter:
-      "شكرا على التوضيح. حاليا نحن نعطي الأولوية لطلبات المستوردين. إذا كنت مستوردا مستقبلا، تواصل معنا في أي وقت."
+      "شكرا على التوضيح. حاليا نحن نعمل بشكل رئيسي مع المستوردين المباشرين. إذا أصبحت شركتكم تستورد مباشرة في المستقبل، فتواصلوا معنا في أي وقت."
   },
   en: {
     intro:
       `Hello, this is ${SALES_CONTACT_NAME} from ${COMPANY_DISPLAY_NAME}. To route you correctly, may I confirm if you are an importer?`,
     clarify:
-      "To confirm, are you importing for resale/business, or buying for local retail or personal use?",
+      "To confirm, does your company import directly, or do you buy from local importers?",
     catalog: `Here is our product catalog and website: ${CATALOG_URL}`,
-    importerQuestion: "May I ask if you are an importer?",
+    importerQuestion: "May I confirm whether your company imports directly?",
     handoff:
       `Thank you for confirming. ${SALES_CONTACT_NAME} will take over this chat from here.`,
     nonImporter:
-      "Thank you for clarifying. At the moment we mainly work with importers. If you become an importer later, feel free to contact us anytime."
+      "Thank you for clarifying. At the moment we mainly work with direct importers. If your company imports directly in the future, feel free to contact us anytime."
   },
   ru: {
     intro:
       `Здравствуйте, это ${SALES_CONTACT_NAME} из ${COMPANY_DISPLAY_NAME}. Чтобы правильно направить ваш запрос, могу уточнить, вы импортер?`,
     clarify:
-      "Для подтверждения: вы импортируете товар для перепродажи и бизнеса или покупаете для местной розницы либо личного использования?",
+      "Для подтверждения: ваша компания сама осуществляет прямой импорт или вы закупаете товар у местных импортеров?",
     catalog: `Вот наш каталог и сайт: ${CATALOG_URL}`,
-    importerQuestion: "Могу уточнить, вы импортер?",
+    importerQuestion: "Могу уточнить, ваша компания занимается прямым импортом?",
     handoff:
       `Спасибо за подтверждение. ${SALES_CONTACT_NAME} дальше продолжит общение с вами лично.`,
     nonImporter:
-      "Спасибо за уточнение. Сейчас мы в основном работаем с импортерами. Если в будущем вы будете импортером, свяжитесь с нами в любое время."
+      "Спасибо за уточнение. Сейчас мы в основном работаем с компаниями, которые занимаются прямым импортом. Если в будущем ваша компания будет импортировать напрямую, свяжитесь с нами в любое время."
   },
   kk: {
     intro:
       `Сәлеметсіз бе, мен ${COMPANY_DISPLAY_NAME} компаниясынан ${SALES_CONTACT_NAME} боламын. Дұрыс бағыттау үшін, сіз импорттаушысыз ба?`,
     clarify:
-      "Нақтылау үшін: сіз тауарды қайта сату және бизнес үшін импорттайсыз ба, әлде жергілікті бөлшек саудаға не жеке пайдалануға аласыз ба?",
+      "Нақтылау үшін: сіздің компанияңыз тікелей импорт жасай ма, әлде жергілікті импорттаушылардан сатып ала ма?",
     catalog: `Міне, біздің каталог пен сайт: ${CATALOG_URL}`,
-    importerQuestion: "Сіз импорттаушысыз ба?",
+    importerQuestion: "Сіздің компанияңыз тікелей импорт жасай ма?",
     handoff:
       `Рақмет, растадыңыз. Енді ${SALES_CONTACT_NAME} бұл әңгімені өзі жалғастырады.`,
     nonImporter:
-      "Нақтылағаныңызға рақмет. Қазір біз негізінен импорттаушылармен жұмыс істейміз. Егер кейін импорттаушы болсаңыз, кез келген уақытта хабарласыңыз."
+      "Нақтылағаныңызға рақмет. Қазір біз негізінен тікелей импорт жасайтын компаниялармен жұмыс істейміз. Егер болашақта компанияңыз тікелей импорттай бастаса, кез келген уақытта хабарласыңыз."
   },
   ky: {
     intro:
       `Салам, мен ${COMPANY_DISPLAY_NAME} компаниясынан ${SALES_CONTACT_NAME} болом. Туура багыттоо үчүн, сиз импорттоочусузбу?`,
     clarify:
-      "Тактоо үчүн: товарды кайра сатуу жана бизнес үчүн импорттойсузбу, же жергиликтүү чекене же жеке колдонуу үчүн сатып аласызбы?",
+      "Тактоо үчүн: сиздин компанияңыз товарды түз импорттойбу же жергиликтүү импорттоочулардан сатып алабы?",
     catalog: `Бул биздин каталог жана сайт: ${CATALOG_URL}`,
-    importerQuestion: "Сиз импорттоочусузбу?",
+    importerQuestion: "Сиздин компанияңыз түз импорттойбу?",
     handoff:
       `Ырастаганыңыз үчүн рахмат. Эми ${SALES_CONTACT_NAME} бул маекти өзү улантат.`,
     nonImporter:
-      "Тактаганыңыз үчүн рахмат. Азыр биз негизинен импорттоочулар менен иштейбиз. Эгер кийин импорттоочу болсоңуз, каалаган убакта жазыңыз."
+      "Тактаганыңыз үчүн рахмат. Азыр биз негизинен түз импорт кылган компаниялар менен иштейбиз. Эгер келечекте компанияңыз түз импорттой баштаса, каалаган убакта жазыңыз."
   },
   es: {
     intro:
       `Hola, soy ${SALES_CONTACT_NAME} de ${COMPANY_DISPLAY_NAME}. Para dirigirle correctamente, puedo confirmar si usted es importador?`,
     clarify:
-      "Para confirmar, usted importa para reventa y negocio, o compra para venta local o uso personal?",
+      "Para confirmarlo, ¿su empresa importa directamente, o compra a importadores locales?",
     catalog: `Este es nuestro catálogo y sitio web: ${CATALOG_URL}`,
-    importerQuestion: "Puedo confirmar si usted es importador?",
+    importerQuestion: "¿Puedo confirmar si su empresa importa directamente?",
     handoff:
       `Gracias por confirmarlo. ${SALES_CONTACT_NAME} continuará este chat con usted directamente.`,
     nonImporter:
-      "Gracias por aclararlo. En este momento trabajamos principalmente con importadores. Si en el futuro usted es importador, escríbanos cuando quiera."
+      "Gracias por la aclaración. Actualmente trabajamos principalmente con importadores directos. Si en el futuro su empresa importa directamente, escríbanos cuando quiera."
   },
   pt: {
     intro:
       `Olá, aqui é ${SALES_CONTACT_NAME} da ${COMPANY_DISPLAY_NAME}. Para direcionar você corretamente, posso confirmar se você é importador?`,
     clarify:
-      "Para confirmar, você importa para revenda e negócio, ou compra para varejo local ou uso pessoal?",
+      "Para confirmar, sua empresa importa diretamente ou compra de importadores locais?",
     catalog: `Aqui está o nosso catálogo e website: ${CATALOG_URL}`,
-    importerQuestion: "Posso confirmar se você é importador?",
+    importerQuestion: "Posso confirmar se a sua empresa importa diretamente?",
     handoff:
       `Obrigado por confirmar. ${SALES_CONTACT_NAME} vai assumir esta conversa a partir de agora.`,
     nonImporter:
-      "Obrigado por esclarecer. Neste momento trabalhamos principalmente com importadores. Se no futuro você for importador, fale conosco quando quiser."
+      "Obrigado pelo esclarecimento. Neste momento trabalhamos principalmente com importadores diretos. Se no futuro a sua empresa importar diretamente, fale conosco quando quiser."
   },
   fr: {
     intro:
       `Bonjour, ici ${SALES_CONTACT_NAME} de ${COMPANY_DISPLAY_NAME}. Pour bien orienter votre demande, puis-je confirmer que vous êtes importateur ?`,
     clarify:
-      "Pour confirmer, importez-vous pour la revente professionnelle ou achetez-vous pour la vente locale ou un usage personnel ?",
+      "Pour confirmer, votre entreprise importe-t-elle directement ou achète-t-elle auprès d'importateurs locaux ?",
     catalog: `Voici notre catalogue et notre site web : ${CATALOG_URL}`,
-    importerQuestion: "Puis-je confirmer que vous êtes importateur ?",
+    importerQuestion: "Puis-je confirmer que votre entreprise importe directement ?",
     handoff:
       `Merci pour votre confirmation. ${SALES_CONTACT_NAME} va reprendre cette conversation directement avec vous.`,
     nonImporter:
-      "Merci pour votre précision. Pour le moment, nous travaillons principalement avec des importateurs. Si vous devenez importateur plus tard, contactez-nous à tout moment."
+      "Merci pour votre précision. Pour le moment, nous travaillons principalement avec des importateurs directs. Si votre entreprise importe directement plus tard, contactez-nous à tout moment."
   },
   zh: {
     intro:
       `你好，我是${COMPANY_DISPLAY_NAME}的${SALES_CONTACT_NAME}。为了正确分配对接，请问您是进口商吗？`,
     clarify:
-      "再确认一下，您是做进口转售/批发业务，还是本地零售或个人采购？",
+      "再确认一下，贵公司是自己直接进口，还是向本地进口商采购？",
     catalog: `这是我们的产品目录和官方网站：${CATALOG_URL}`,
-    importerQuestion: "请问您是进口商吗？",
+    importerQuestion: "请问贵公司是否直接进口？",
     handoff: `感谢确认，${SALES_CONTACT_NAME}会马上接手和您继续沟通。`,
     nonImporter:
-      "感谢说明。我们目前主要优先对接进口商客户。如果您之后有进口需求，欢迎随时联系。"
+      "感谢说明。我们目前主要对接直接进口的客户。如果贵公司之后开始直接进口，欢迎随时联系。"
   }
 };
 
