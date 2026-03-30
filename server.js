@@ -32,6 +32,26 @@ const MAX_SCREENING_PROMPTS = Number(
 const ENABLE_CATALOG_AUTOSEND = /^(1|true|yes)$/i.test(
   process.env.ENABLE_CATALOG_AUTOSEND || "false"
 );
+const SEND_CATALOG_ON_FIRST_REPLY = /^(1|true|yes)$/i.test(
+  process.env.SEND_CATALOG_ON_FIRST_REPLY || "false"
+);
+const ENABLE_CONTACT_CARD_AUTOSEND = /^(1|true|yes)$/i.test(
+  process.env.ENABLE_CONTACT_CARD_AUTOSEND || "false"
+);
+const CONTACT_CARD_FORMATTED_NAME =
+  process.env.CONTACT_CARD_FORMATTED_NAME || SALES_CONTACT_NAME;
+const CONTACT_CARD_FIRST_NAME =
+  process.env.CONTACT_CARD_FIRST_NAME || SALES_CONTACT_NAME;
+const CONTACT_CARD_LAST_NAME = process.env.CONTACT_CARD_LAST_NAME || "";
+const CONTACT_CARD_COMPANY =
+  process.env.CONTACT_CARD_COMPANY || COMPANY_DISPLAY_NAME;
+const CONTACT_CARD_TITLE = process.env.CONTACT_CARD_TITLE || "";
+const CONTACT_CARD_PHONE = process.env.CONTACT_CARD_PHONE || "";
+const CONTACT_CARD_PHONE_TYPE =
+  process.env.CONTACT_CARD_PHONE_TYPE || "WORK";
+const CONTACT_CARD_WA_ID = process.env.CONTACT_CARD_WA_ID || "";
+const CONTACT_CARD_EMAIL = process.env.CONTACT_CARD_EMAIL || "";
+const CONTACT_CARD_URL = process.env.CONTACT_CARD_URL || CATALOG_URL;
 
 const AI_PROVIDER = process.env.AI_PROVIDER || "claude";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
@@ -511,6 +531,49 @@ function extractMessageText(message) {
   return "";
 }
 
+function shortenLogText(value, maxLength = 140) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "-";
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function formatLeadLogMeta(meta = {}) {
+  const parts = [];
+  if (meta.waId) parts.push(`wa=${meta.waId}`);
+  if (meta.profileName) parts.push(`name="${shortenLogText(meta.profileName, 40)}"`);
+  if (meta.language) parts.push(`lang=${meta.language}`);
+  if (meta.country) parts.push(`country="${shortenLogText(meta.country, 40)}"`);
+  if (meta.buyerType) parts.push(`buyer=${meta.buyerType}`);
+  if (meta.status) parts.push(`status=${meta.status}`);
+  if (meta.reason) parts.push(`reason=${meta.reason}`);
+  if (typeof meta.hasReferral === "boolean") {
+    parts.push(`ad_referral=${meta.hasReferral ? "yes" : "no"}`);
+  }
+  if (meta.messageType) parts.push(`type=${meta.messageType}`);
+  if (meta.text !== undefined) parts.push(`text="${shortenLogText(meta.text)}"`);
+  return parts.join(" | ");
+}
+
+function logInboundEvent(event) {
+  console.log(
+    `[inbound] ${formatLeadLogMeta({
+      waId: event.waId,
+      profileName: event.profileName,
+      hasReferral: Boolean(event.referral),
+      messageType: event.type,
+      text: event.text
+    })}`
+  );
+}
+
+function logDecision(label, meta = {}) {
+  console.log(`[decision] ${label} | ${formatLeadLogMeta(meta)}`);
+}
+
+function logOutbound(label, meta = {}) {
+  console.log(`[outbound] ${label} | ${formatLeadLogMeta(meta)}`);
+}
+
 async function enqueueLeadEvent(event) {
   const queueKey = normalizeWaId(event.waId);
   const previous = contactQueues.get(queueKey) || Promise.resolve();
@@ -535,6 +598,8 @@ async function processLeadEvent(event) {
     return;
   }
 
+  logInboundEvent(event);
+
   if (isDuplicateMessage(event.messageId)) {
     console.log(`Skipping duplicate message ${event.messageId || "unknown"}`);
     return;
@@ -551,6 +616,13 @@ async function processLeadEvent(event) {
   );
 
   if (bypassReason) {
+    logDecision("bypass", {
+      waId: event.waId,
+      profileName: event.profileName,
+      reason: bypassReason,
+      hasReferral: Boolean(event.referral),
+      text: event.text
+    });
     if (bypassReason === "existing_customer") {
       previousState.existingCustomer = true;
     }
@@ -594,6 +666,12 @@ async function processLeadEvent(event) {
   }
 
   if (previousState.screeningComplete) {
+    logDecision("already_screened_skip", {
+      waId: event.waId,
+      profileName: event.profileName,
+      status: previousState.lastLeadStatus || "screening_complete_skip",
+      text: event.text
+    });
     previousState.lastInboundText = event.text || "";
     previousState.lastInboundMessageId = event.messageId || "";
     previousState.lastUpdatedAt = new Date().toISOString();
@@ -618,6 +696,17 @@ async function processLeadEvent(event) {
   }
 
   const lead = await analyzeLead(event, previousState);
+
+  logDecision("analyzed", {
+    waId: lead.waId,
+    profileName: lead.profileName,
+    language: lead.language,
+    country: lead.countryGuess,
+    buyerType: lead.buyerType,
+    status: lead.leadStatus,
+    hasReferral: Boolean(lead.referral),
+    text: lead.text
+  });
 
   lead.state.inboundCount = Number(previousState.inboundCount || 0) + 1;
   lead.state.lastInboundText = lead.text;
@@ -662,21 +751,54 @@ async function processLeadEvent(event) {
   saveState(STATE_PATH, leadState);
 
   if (lead.leadStatus === "qualified") {
+    logDecision("qualified", {
+      waId: lead.waId,
+      profileName: lead.profileName,
+      language: lead.language,
+      country: lead.countryGuess,
+      buyerType: lead.buyerType,
+      status: lead.leadStatus,
+      text: lead.text
+    });
     await handleQualifiedLead(lead, previousState);
     return;
   }
 
   if (lead.leadStatus === "low_quality") {
+    logDecision("low_quality", {
+      waId: lead.waId,
+      profileName: lead.profileName,
+      language: lead.language,
+      country: lead.countryGuess,
+      buyerType: lead.buyerType,
+      status: lead.leadStatus,
+      text: lead.text
+    });
     await handleDisqualifiedLead(lead, previousState);
     return;
   }
 
   if (!previousState.sequenceStartedAt) {
+    logDecision("start_sequence", {
+      waId: lead.waId,
+      profileName: lead.profileName,
+      language: lead.language,
+      buyerType: lead.buyerType,
+      status: lead.leadStatus,
+      text: lead.text
+    });
     await startLeadSequence(lead);
     return;
   }
 
   if (shouldRepeatImporterQuestion(lead, previousState)) {
+    logDecision("repeat_importer_question", {
+      waId: lead.waId,
+      profileName: lead.profileName,
+      language: lead.language,
+      status: lead.leadStatus,
+      text: lead.text
+    });
     await sendImporterQuestionReminderStep(
       lead.waId,
       lead.language,
@@ -686,10 +808,24 @@ async function processLeadEvent(event) {
   }
 
   if (shouldForceScreeningDecision(lead.state)) {
+    logDecision("force_timeout_decision", {
+      waId: lead.waId,
+      profileName: lead.profileName,
+      language: lead.language,
+      status: lead.leadStatus,
+      text: lead.text
+    });
     await handleTimedOutLead(lead, previousState);
     return;
   }
 
+  logDecision("send_clarify_question", {
+    waId: lead.waId,
+    profileName: lead.profileName,
+    language: lead.language,
+    status: lead.leadStatus,
+    text: lead.text
+  });
   await sendClarifyQuestionStep(lead.waId, lead.language, "screening_clarify");
 }
 
@@ -976,6 +1112,14 @@ async function startLeadSequence(lead) {
   leadState[lead.waId] = state;
   saveState(STATE_PATH, leadState);
 
+  if (SEND_CATALOG_ON_FIRST_REPLY && !state.catalogSentAt) {
+    await sendCatalogStep(lead.waId, lead.language, "catalog_first_reply");
+  }
+
+  if (ENABLE_CONTACT_CARD_AUTOSEND && !state.contactCardSentAt) {
+    await sendContactCardStep(lead.waId, lead.language, "contact_card_first_reply");
+  }
+
   if (ENABLE_CATALOG_AUTOSEND && lead.wantsCatalog) {
     if (!state.catalogSentAt) {
       await sendCatalogStep(lead.waId, lead.language, "catalog_requested_initial");
@@ -1007,6 +1151,87 @@ async function sendCatalogStep(waId, language, reason) {
   state.catalogSentAt = new Date().toISOString();
   state.lastBotReply = t.catalog;
   state.sequenceStartedAt = state.sequenceStartedAt || state.catalogSentAt;
+  leadState[waId] = state;
+  saveState(STATE_PATH, leadState);
+}
+
+function buildContactCardPayload() {
+  const phone = String(CONTACT_CARD_PHONE || "").trim();
+  const formattedName = String(CONTACT_CARD_FORMATTED_NAME || "").trim();
+  const firstName = String(CONTACT_CARD_FIRST_NAME || "").trim();
+
+  if (!phone || !formattedName || !firstName) {
+    return null;
+  }
+
+  const payload = {
+    name: {
+      formatted_name: formattedName,
+      first_name: firstName,
+      ...(CONTACT_CARD_LAST_NAME ? { last_name: CONTACT_CARD_LAST_NAME } : {})
+    },
+    phones: [
+      {
+        phone,
+        type: String(CONTACT_CARD_PHONE_TYPE || "WORK").toUpperCase(),
+        ...(CONTACT_CARD_WA_ID
+          ? { wa_id: normalizeWaId(CONTACT_CARD_WA_ID) }
+          : {})
+      }
+    ],
+    ...(CONTACT_CARD_COMPANY || CONTACT_CARD_TITLE
+      ? {
+          org: {
+            ...(CONTACT_CARD_COMPANY ? { company: CONTACT_CARD_COMPANY } : {}),
+            ...(CONTACT_CARD_TITLE ? { title: CONTACT_CARD_TITLE } : {})
+          }
+        }
+      : {}),
+    ...(CONTACT_CARD_EMAIL
+      ? { emails: [{ email: CONTACT_CARD_EMAIL, type: "WORK" }] }
+      : {}),
+    ...(CONTACT_CARD_URL ? { urls: [{ url: CONTACT_CARD_URL, type: "WORK" }] } : {})
+  };
+
+  return [payload];
+}
+
+function describeContactCard() {
+  const name = String(CONTACT_CARD_FORMATTED_NAME || "").trim();
+  const phone = String(CONTACT_CARD_PHONE || "").trim();
+  return `[contact_card] ${name}${phone ? ` | ${phone}` : ""}`.trim();
+}
+
+async function sendContactCardStep(waId, language, reason) {
+  const state = sanitizeLeadState(leadState[waId] || createLeadState());
+  if (
+    state.screeningComplete ||
+    state.existingCustomer ||
+    state.contactCardSentAt
+  ) {
+    return;
+  }
+
+  const contacts = buildContactCardPayload();
+  if (!contacts) {
+    console.warn("Contact card autosend is enabled but contact card fields are incomplete.");
+    return;
+  }
+
+  await sendAndRecordContacts(waId, contacts, {
+    direction: "outbound",
+    reply_engine: reason,
+    language: language || state.language || "en",
+    country_guess: state.country || guessCountryAndLanguage(waId).country,
+    company_name: state.companyName || "",
+    buyer_type: state.buyerType || "unknown",
+    lead_status: state.lastLeadStatus || "need_more_info",
+    profile_name: state.profileName || ""
+  });
+
+  state.contactCardSentAt = new Date().toISOString();
+  state.lastBotReply = describeContactCard();
+  state.sequenceStartedAt = state.sequenceStartedAt || state.contactCardSentAt;
   leadState[waId] = state;
   saveState(STATE_PATH, leadState);
 }
@@ -1516,6 +1741,16 @@ async function sendAndRecordMessage(waId, body, meta = {}) {
   const replyText = sanitizeReplyText(body);
   if (!replyText) return;
 
+  logOutbound(meta.reply_engine || "text", {
+    waId,
+    profileName: meta.profile_name,
+    language: meta.language,
+    country: meta.country_guess,
+    buyerType: meta.buyer_type,
+    status: meta.lead_status,
+    text: replyText
+  });
+
   if (WHATSAPP_ACCESS_TOKEN && WHATSAPP_PHONE_NUMBER_ID) {
     try {
       await sendWhatsAppText(waId, replyText);
@@ -1531,6 +1766,37 @@ async function sendAndRecordMessage(waId, body, meta = {}) {
     ...meta,
     wa_id: waId,
     reply_text: replyText
+  });
+}
+
+async function sendAndRecordContacts(waId, contacts, meta = {}) {
+  if (!Array.isArray(contacts) || !contacts.length) return;
+
+  logOutbound(meta.reply_engine || "contacts", {
+    waId,
+    profileName: meta.profile_name,
+    language: meta.language,
+    country: meta.country_guess,
+    buyerType: meta.buyer_type,
+    status: meta.lead_status,
+    text: describeContactCard()
+  });
+
+  if (WHATSAPP_ACCESS_TOKEN && WHATSAPP_PHONE_NUMBER_ID) {
+    try {
+      await sendWhatsAppContacts(waId, contacts);
+    } catch (error) {
+      console.error(`WhatsApp contact send failed for ${waId}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  appendLeadLog({
+    updated_at: new Date().toISOString(),
+    incoming_text: "",
+    ...meta,
+    wa_id: waId,
+    reply_text: describeContactCard()
   });
 }
 
@@ -1558,6 +1824,30 @@ async function sendWhatsAppText(to, body) {
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`WhatsApp send failed: ${response.status} ${errorText}`);
+  }
+}
+
+async function sendWhatsAppContacts(to, contacts) {
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
+  const payload = {
+    messaging_product: "whatsapp",
+    to,
+    type: "contacts",
+    contacts
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`WhatsApp contact send failed: ${response.status} ${errorText}`);
   }
 }
 
@@ -1763,6 +2053,7 @@ function createLeadState() {
     buyerType: "unknown",
     sentIntroAt: "",
     catalogSentAt: "",
+    contactCardSentAt: "",
     importerAskedAt: "",
     lastImporterReminderAt: "",
     sequenceStartedAt: "",
