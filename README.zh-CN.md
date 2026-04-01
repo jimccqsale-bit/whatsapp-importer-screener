@@ -270,13 +270,21 @@ node server.js
 - 最新 Meta 事件名和状态
 - 最近一次手动改判时间
 - 前 3 条客户消息摘要
+- 未完成筛选、还没有导出记录的 `unclassified` 客户
 
 适合用来：
 
 - 直接浏览最近全部线索
 - 筛选 `qualified` / `low_quality`
+- 筛选 `unclassified`
 - 按 `buyer_type` 看名单
 - 快速判断哪些线索已经回传、哪些改判过
+
+这个总表页里还可以直接做手动改判：
+
+- 每行可直接选择 `qualified` / `low_quality`
+- 每行可直接调整 `buyer_type`
+- 点击 `Apply` 后会立刻调用手动改判接口
 
 ## 导出记录格式
 

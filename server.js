@@ -3020,9 +3020,32 @@ function renderAdminHistoryPage() {
 
 function buildLeadTableResult(input) {
   const waId = normalizeWaId(input.wa_id);
-  const leadStatus = normalizeLeadStatus(input.lead_status);
+  const rawLeadStatus = String(input.lead_status || "").trim().toLowerCase();
+  const leadStatus =
+    rawLeadStatus === "unclassified"
+      ? "unclassified"
+      : normalizeLeadStatus(rawLeadStatus);
   const buyerType = normalizeBuyerType(input.buyer_type);
   const limit = Math.min(500, Math.max(1, Number(input.limit || 100)));
+
+  const leadLogRows = readNdjsonFile(LEAD_LOG_PATH).map((row) => ({
+    wa_id: normalizeWaId(row.wa_id),
+    updated_at: row.updated_at || "",
+    profile_name: String(row.profile_name || ""),
+    company_name: String(row.company_name || ""),
+    language: String(row.language || ""),
+    country_guess: String(row.country_guess || ""),
+    buyer_type: String(row.buyer_type || ""),
+    lead_status: String(row.lead_status || ""),
+    lead_source: String(row.lead_source || ""),
+    referral_source_id: String(row.referral_source_id || ""),
+    ctwa_clid: String(row.ctwa_clid || ""),
+    incoming_text: String(row.incoming_text || ""),
+    reply_text: String(row.reply_text || ""),
+    reply_engine: String(row.reply_engine || "")
+  }));
+
+  const latestLeadLogByWaId = latestRecordByWaId(leadLogRows);
 
   const exportRows = readNdjsonFile(EXPORT_LOG_PATH).map((row) => {
     const record = row.record || row;
@@ -3081,13 +3104,95 @@ function buildLeadTableResult(input) {
     }))
   );
 
-  const rows = Array.from(latestByWaId.values())
-    .map((row) => {
-      const state = sanitizeLeadState(leadState[row.wa_id] || createLeadState());
-      const meta = latestMetaByWaId.get(row.wa_id) || {};
-      const override = latestOverrideByWaId.get(row.wa_id) || {};
+  const allWaIds = new Set([
+    ...Object.keys(leadState).map(normalizeWaId),
+    ...Array.from(latestLeadLogByWaId.keys()),
+    ...Array.from(latestByWaId.keys()),
+    ...Array.from(latestMetaByWaId.keys()),
+    ...Array.from(latestOverrideByWaId.keys())
+  ]);
+
+  const rows = Array.from(allWaIds)
+    .filter(Boolean)
+    .map((currentWaId) => {
+      const row = latestByWaId.get(currentWaId) || {};
+      const state = sanitizeLeadState(leadState[currentWaId] || createLeadState());
+      const log = latestLeadLogByWaId.get(currentWaId) || {};
+      const meta = latestMetaByWaId.get(currentWaId) || {};
+      const override = latestOverrideByWaId.get(currentWaId) || {};
+      const derivedStatus =
+        row.lead_status ||
+        state.lastLeadStatus ||
+        (log.lead_status && supportedLeadStatuses.has(String(log.lead_status || "")) ? log.lead_status : "") ||
+        "";
+      const displayStatus =
+        derivedStatus ||
+        (state.lastInboundText || log.incoming_text || state.inboundCount ? "unclassified" : "");
       return {
         ...row,
+        wa_id: currentWaId,
+        updated_at:
+          row.updated_at ||
+          state.lastUpdatedAt ||
+          log.updated_at ||
+          meta.meta_queued_at ||
+          override.override_at ||
+          "",
+        lead_status: displayStatus,
+        buyer_type:
+          row.buyer_type ||
+          state.buyerType ||
+          log.buyer_type ||
+          "unknown",
+        profile_name:
+          row.profile_name ||
+          state.profileName ||
+          log.profile_name ||
+          "",
+        company_name:
+          row.company_name ||
+          state.companyName ||
+          log.company_name ||
+          "",
+        language:
+          row.language ||
+          state.language ||
+          log.language ||
+          "",
+        country_guess:
+          row.country_guess ||
+          state.country ||
+          log.country_guess ||
+          "",
+        decision_reason:
+          row.decision_reason ||
+          state.decisionReason ||
+          "",
+        lead_source:
+          row.lead_source ||
+          state.leadSource ||
+          log.lead_source ||
+          "",
+        referral_source_id:
+          row.referral_source_id ||
+          state.referralSourceId ||
+          log.referral_source_id ||
+          "",
+        ctwa_clid:
+          row.ctwa_clid ||
+          state.ctwaClid ||
+          log.ctwa_clid ||
+          "",
+        first_3_messages:
+          row.first_3_messages ||
+          (Array.isArray(state.firstThreeInboundTexts)
+            ? state.firstThreeInboundTexts.join(" | ")
+            : "") ||
+          log.incoming_text ||
+          "",
+        last_inbound_text: state.lastInboundText || log.incoming_text || "",
+        last_reply_text: log.reply_text || "",
+        export_status: row.export_status || "",
         current_state_status: state.lastLeadStatus || "",
         current_state_buyer_type: state.buyerType || "",
         current_state_reason: state.decisionReason || "",
@@ -3097,11 +3202,19 @@ function buildLeadTableResult(input) {
         meta_queued_at: meta.meta_queued_at || "",
         override_at: override.override_at || "",
         override_previous_status: override.previous_status || "",
-        override_previous_buyer_type: override.previous_buyer_type || ""
+        override_previous_buyer_type: override.previous_buyer_type || "",
+        screening_complete: Boolean(state.screeningComplete),
+        inbound_count: Number(state.inboundCount || 0),
+        screening_prompt_count:
+          Number(row.screening_prompt_count || state.screeningPromptCount || 0)
       };
     })
     .filter((row) => !waId || row.wa_id === waId)
-    .filter((row) => !leadStatus || row.lead_status === leadStatus)
+    .filter((row) => {
+      if (!leadStatus) return true;
+      if (leadStatus === "unclassified") return row.lead_status === "unclassified";
+      return row.lead_status === leadStatus;
+    })
     .filter((row) => !buyerType || row.buyer_type === buyerType)
     .sort((a, b) => toTime(b.updated_at) - toTime(a.updated_at))
     .slice(0, limit);
@@ -3263,9 +3376,22 @@ function renderAdminLeadTablePage() {
     .qualified { background: rgba(38,194,129,.18); color: #b8f0d3; }
     .low_quality { background: rgba(255,107,107,.18); color: #ffd2d2; }
     .need_more_info { background: rgba(255,179,71,.18); color: #ffe0b0; }
+    .unclassified { background: rgba(155,163,180,.18); color: #d7dde8; }
     .empty {
       color: var(--muted);
       padding: 20px 0 8px;
+    }
+    .override-box {
+      display: grid;
+      gap: 6px;
+      min-width: 180px;
+    }
+    .override-box button {
+      padding: 8px 10px;
+    }
+    .small {
+      font-size: 12px;
+      color: var(--muted);
     }
     @media (max-width: 1000px) {
       .grid { grid-template-columns: 1fr; }
@@ -3294,6 +3420,7 @@ function renderAdminLeadTablePage() {
               <option value="qualified">qualified</option>
               <option value="low_quality">low_quality</option>
               <option value="need_more_info">need_more_info</option>
+              <option value="unclassified">unclassified</option>
             </select>
           </label>
           <label>
@@ -3336,10 +3463,11 @@ function renderAdminLeadTablePage() {
               <th>Meta Status</th>
               <th>Override At</th>
               <th>Messages</th>
+              <th>Manual Override</th>
             </tr>
           </thead>
           <tbody id="table-body">
-            <tr><td colspan="13" class="empty">Enter your token and click Load Leads.</td></tr>
+            <tr><td colspan="14" class="empty">Enter your token and click Load Leads.</td></tr>
           </tbody>
         </table>
       </div>
@@ -3364,6 +3492,32 @@ function renderAdminLeadTablePage() {
       return '<span class="pill ' + escapeHtml(value) + '">' + escapeHtml(value) + '</span>';
     }
 
+    async function applyOverride(waId, leadStatus, buyerType) {
+      const token = form.elements.token.value.trim();
+      if (!token) {
+        alert("Enter Admin Override Token first.");
+        return;
+      }
+
+      const response = await fetch("/admin/lead-override", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token,
+          wa_id: waId,
+          lead_status: leadStatus,
+          buyer_type: buyerType || (leadStatus === "qualified" ? "importer" : "non_importer"),
+          decision_reason: "manual_table_override"
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        alert(data.error || "Override failed");
+        return;
+      }
+      await loadTable();
+    }
+
     async function loadTable() {
       const payload = Object.fromEntries(new FormData(form).entries());
       for (const [key, value] of Object.entries(payload)) {
@@ -3384,12 +3538,14 @@ function renderAdminLeadTablePage() {
       count.textContent = 'Showing ' + data.count + ' lead(s)';
       body.innerHTML = "";
       if (!data.rows.length) {
-        body.innerHTML = '<tr><td colspan="13" class="empty">No rows found.</td></tr>';
+        body.innerHTML = '<tr><td colspan="14" class="empty">No rows found.</td></tr>';
         return;
       }
 
       data.rows.forEach((row) => {
         const tr = document.createElement("tr");
+        const statusSelectId = "status-" + row.wa_id;
+        const buyerSelectId = "buyer-" + row.wa_id;
         tr.innerHTML = [
           row.updated_at,
           '<code>' + escapeHtml(row.wa_id) + '</code>',
@@ -3403,9 +3559,34 @@ function renderAdminLeadTablePage() {
           escapeHtml(row.meta_event_name),
           escapeHtml(row.meta_status),
           escapeHtml(row.override_at),
-          escapeHtml(row.first_3_messages)
+          escapeHtml(row.first_3_messages),
+          [
+            '<div class="override-box">',
+            '<select id="' + statusSelectId + '">',
+            '<option value="qualified"' + (row.lead_status === "qualified" ? ' selected' : '') + '>qualified</option>',
+            '<option value="low_quality"' + (row.lead_status === "low_quality" ? ' selected' : '') + '>low_quality</option>',
+            '</select>',
+            '<select id="' + buyerSelectId + '">',
+            '<option value="importer"' + (row.buyer_type === "importer" ? ' selected' : '') + '>importer</option>',
+            '<option value="wholesaler"' + (row.buyer_type === "wholesaler" ? ' selected' : '') + '>wholesaler</option>',
+            '<option value="distributor"' + (row.buyer_type === "distributor" ? ' selected' : '') + '>distributor</option>',
+            '<option value="workshop"' + (row.buyer_type === "workshop" ? ' selected' : '') + '>workshop</option>',
+            '<option value="retail"' + (row.buyer_type === "retail" ? ' selected' : '') + '>retail</option>',
+            '<option value="non_importer"' + (row.buyer_type === "non_importer" ? ' selected' : '') + '>non_importer</option>',
+            '<option value="unknown"' + (row.buyer_type === "unknown" ? ' selected' : '') + '>unknown</option>',
+            '</select>',
+            '<button type="button" data-wa="' + escapeHtml(row.wa_id) + '">Apply</button>',
+            '<div class="small">Current: ' + escapeHtml(row.current_state_status || row.lead_status || "unclassified") + '</div>',
+            '</div>'
+          ].join("")
         ].map((cell) => '<td>' + cell + '</td>').join('');
         body.appendChild(tr);
+
+        tr.querySelector("button").addEventListener("click", async () => {
+          const selectedStatus = document.getElementById(statusSelectId).value;
+          const selectedBuyer = document.getElementById(buyerSelectId).value;
+          await applyOverride(row.wa_id, selectedStatus, selectedBuyer);
+        });
       });
     }
 
