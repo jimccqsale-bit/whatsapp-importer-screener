@@ -426,6 +426,27 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, result);
     }
 
+    if (req.method === "GET" && url.pathname === "/admin/lead-table") {
+      if (!ADMIN_OVERRIDE_TOKEN) {
+        return json(res, 404, { error: "Admin table is disabled" });
+      }
+
+      return html(res, 200, renderAdminLeadTablePage());
+    }
+
+    if (req.method === "POST" && url.pathname === "/admin/lead-table/search") {
+      if (!ADMIN_OVERRIDE_TOKEN) {
+        return json(res, 404, { error: "Admin table is disabled" });
+      }
+
+      const body = await readJson(req);
+      if (String(body.token || "") !== ADMIN_OVERRIDE_TOKEN) {
+        return json(res, 403, { error: "Invalid admin override token" });
+      }
+
+      return json(res, 200, buildLeadTableResult(body));
+    }
+
     return json(res, 404, { error: "Not found" });
   } catch (error) {
     console.error(error);
@@ -2991,6 +3012,406 @@ function renderAdminHistoryPage() {
       renderRecords("meta-section", "meta-count", "meta-records", data.meta_events || [], "records");
       renderRecords("screened-section", "screened-count", "screened-records", data.screened_leads || [], "records");
       renderRecords("overrides-section", "overrides-count", "overrides-records", data.manual_overrides || [], "records");
+    });
+  </script>
+</body>
+</html>`;
+}
+
+function buildLeadTableResult(input) {
+  const waId = normalizeWaId(input.wa_id);
+  const leadStatus = normalizeLeadStatus(input.lead_status);
+  const buyerType = normalizeBuyerType(input.buyer_type);
+  const limit = Math.min(500, Math.max(1, Number(input.limit || 100)));
+
+  const exportRows = readNdjsonFile(EXPORT_LOG_PATH).map((row) => {
+    const record = row.record || row;
+    return {
+      wa_id: normalizeWaId(record.wa_id),
+      updated_at:
+        row.queued_at || record.exported_at || record.updated_at || "",
+      export_status: row.status || "",
+      lead_status: String(record.lead_status || ""),
+      buyer_type: String(record.buyer_type || ""),
+      decision_reason: String(record.decision_reason || ""),
+      profile_name: String(record.profile_name || ""),
+      company_name: String(record.company_name || ""),
+      language: String(record.language || ""),
+      country_guess: String(record.country_guess || ""),
+      lead_source: String(record.lead_source || ""),
+      referral_source_id: String(record.referral_source_id || ""),
+      ctwa_clid: String(record.ctwa_clid || ""),
+      first_3_messages: String(record.first_3_messages || ""),
+      screening_inbound_count: Number(record.screening_inbound_count || 0),
+      screening_prompt_count: Number(record.screening_prompt_count || 0)
+    };
+  });
+
+  const latestByWaId = new Map();
+  for (const row of exportRows) {
+    if (!row.wa_id) continue;
+    const existing = latestByWaId.get(row.wa_id);
+    if (!existing) {
+      latestByWaId.set(row.wa_id, row);
+      continue;
+    }
+    if (toTime(row.updated_at) >= toTime(existing.updated_at)) {
+      latestByWaId.set(row.wa_id, row);
+    }
+  }
+
+  const latestMetaByWaId = latestRecordByWaId(
+    readNdjsonFile(META_EVENT_LOG_PATH).map((row) => {
+      const summary = row.lead_summary || {};
+      return {
+        wa_id: normalizeWaId(summary.wa_id),
+        meta_queued_at: row.queued_at || "",
+        meta_status: String(row.status || ""),
+        event_name: String(row.event_name || "")
+      };
+    })
+  );
+
+  const latestOverrideByWaId = latestRecordByWaId(
+    readNdjsonFile(MANUAL_OVERRIDE_LOG_PATH).map((row) => ({
+      wa_id: normalizeWaId(row.wa_id),
+      override_at: row.updated_at || "",
+      previous_status: String(row.previous_status || ""),
+      previous_buyer_type: String(row.previous_buyer_type || "")
+    }))
+  );
+
+  const rows = Array.from(latestByWaId.values())
+    .map((row) => {
+      const state = sanitizeLeadState(leadState[row.wa_id] || createLeadState());
+      const meta = latestMetaByWaId.get(row.wa_id) || {};
+      const override = latestOverrideByWaId.get(row.wa_id) || {};
+      return {
+        ...row,
+        current_state_status: state.lastLeadStatus || "",
+        current_state_buyer_type: state.buyerType || "",
+        current_state_reason: state.decisionReason || "",
+        current_state_updated_at: state.lastUpdatedAt || "",
+        meta_status: meta.meta_status || "",
+        meta_event_name: meta.event_name || "",
+        meta_queued_at: meta.meta_queued_at || "",
+        override_at: override.override_at || "",
+        override_previous_status: override.previous_status || "",
+        override_previous_buyer_type: override.previous_buyer_type || ""
+      };
+    })
+    .filter((row) => !waId || row.wa_id === waId)
+    .filter((row) => !leadStatus || row.lead_status === leadStatus)
+    .filter((row) => !buyerType || row.buyer_type === buyerType)
+    .sort((a, b) => toTime(b.updated_at) - toTime(a.updated_at))
+    .slice(0, limit);
+
+  return {
+    ok: true,
+    filters: {
+      wa_id: waId,
+      lead_status: leadStatus,
+      buyer_type: buyerType,
+      limit
+    },
+    count: rows.length,
+    rows
+  };
+}
+
+function latestRecordByWaId(rows) {
+  const byWaId = new Map();
+  for (const row of rows) {
+    if (!row.wa_id) continue;
+    const existing = byWaId.get(row.wa_id);
+    const rowTime = toTime(row.updated_at || row.meta_queued_at || row.override_at);
+    const existingTime = existing
+      ? toTime(existing.updated_at || existing.meta_queued_at || existing.override_at)
+      : -1;
+    if (!existing || rowTime >= existingTime) {
+      byWaId.set(row.wa_id, row);
+    }
+  }
+  return byWaId;
+}
+
+function toTime(value) {
+  const time = new Date(value || 0).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function renderAdminLeadTablePage() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lead Table</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --panel: #171a21;
+      --panel2: #0f131a;
+      --muted: #9ba3b4;
+      --border: #2a3040;
+      --accent: #4c8dff;
+      --text: #f3f6fb;
+      --good: #26c281;
+      --bad: #ff6b6b;
+      --warn: #ffb347;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px 16px 40px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 16px 40px rgba(0,0,0,.25);
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+    }
+    p {
+      margin: 0 0 16px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    form {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 2fr 1.2fr 1.2fr 1fr;
+    }
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 14px;
+    }
+    input, select, button {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--panel2);
+      color: var(--text);
+      padding: 10px 12px;
+      font: inherit;
+    }
+    button {
+      border: none;
+      background: var(--accent);
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .count {
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1400px;
+      background: var(--panel2);
+    }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+      font-size: 13px;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: #171c25;
+      z-index: 1;
+    }
+    td code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .pill {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .qualified { background: rgba(38,194,129,.18); color: #b8f0d3; }
+    .low_quality { background: rgba(255,107,107,.18); color: #ffd2d2; }
+    .need_more_info { background: rgba(255,179,71,.18); color: #ffe0b0; }
+    .empty {
+      color: var(--muted);
+      padding: 20px 0 8px;
+    }
+    @media (max-width: 1000px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <h1>All Leads Table</h1>
+      <p>This page shows the latest known record for each WhatsApp lead from <code>exports.ndjson</code>, enriched with the latest Meta event, current state, and latest manual override.</p>
+      <form id="table-form">
+        <div class="grid">
+          <label>
+            Admin Override Token
+            <input name="token" type="password" autocomplete="current-password" required />
+          </label>
+          <label>
+            WhatsApp Number (wa_id)
+            <input name="wa_id" placeholder="optional" />
+          </label>
+          <label>
+            Lead Status
+            <select name="lead_status">
+              <option value="">all</option>
+              <option value="qualified">qualified</option>
+              <option value="low_quality">low_quality</option>
+              <option value="need_more_info">need_more_info</option>
+            </select>
+          </label>
+          <label>
+            Buyer Type
+            <select name="buyer_type">
+              <option value="">all</option>
+              <option value="importer">importer</option>
+              <option value="wholesaler">wholesaler</option>
+              <option value="distributor">distributor</option>
+              <option value="workshop">workshop</option>
+              <option value="retail">retail</option>
+              <option value="non_importer">non_importer</option>
+              <option value="unknown">unknown</option>
+            </select>
+          </label>
+        </div>
+        <div class="grid">
+          <label>
+            Limit
+            <input name="limit" type="number" min="1" max="500" value="100" />
+          </label>
+        </div>
+        <button type="submit">Load Leads</button>
+      </form>
+      <div id="count" class="count"></div>
+      <div class="table-wrap">
+        <table id="leads-table">
+          <thead>
+            <tr>
+              <th>Updated</th>
+              <th>wa_id</th>
+              <th>Status</th>
+              <th>Buyer</th>
+              <th>Name</th>
+              <th>Company</th>
+              <th>Language</th>
+              <th>Country</th>
+              <th>Reason</th>
+              <th>Meta Event</th>
+              <th>Meta Status</th>
+              <th>Override At</th>
+              <th>Messages</th>
+            </tr>
+          </thead>
+          <tbody id="table-body">
+            <tr><td colspan="13" class="empty">Enter your token and click Load Leads.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <script>
+    const form = document.getElementById("table-form");
+    const count = document.getElementById("count");
+    const body = document.getElementById("table-body");
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function renderStatus(value) {
+      if (!value) return "";
+      return '<span class="pill ' + escapeHtml(value) + '">' + escapeHtml(value) + '</span>';
+    }
+
+    async function loadTable() {
+      const payload = Object.fromEntries(new FormData(form).entries());
+      for (const [key, value] of Object.entries(payload)) {
+        if (typeof value === "string") payload[key] = value.trim();
+      }
+
+      const response = await fetch("/admin/lead-table/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        alert(data.error || "Load failed");
+        return;
+      }
+
+      count.textContent = 'Showing ' + data.count + ' lead(s)';
+      body.innerHTML = "";
+      if (!data.rows.length) {
+        body.innerHTML = '<tr><td colspan="13" class="empty">No rows found.</td></tr>';
+        return;
+      }
+
+      data.rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = [
+          row.updated_at,
+          '<code>' + escapeHtml(row.wa_id) + '</code>',
+          renderStatus(row.lead_status),
+          escapeHtml(row.buyer_type),
+          escapeHtml(row.profile_name),
+          escapeHtml(row.company_name),
+          escapeHtml(row.language),
+          escapeHtml(row.country_guess),
+          escapeHtml(row.decision_reason),
+          escapeHtml(row.meta_event_name),
+          escapeHtml(row.meta_status),
+          escapeHtml(row.override_at),
+          escapeHtml(row.first_3_messages)
+        ].map((cell) => '<td>' + cell + '</td>').join('');
+        body.appendChild(tr);
+      });
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await loadTable();
     });
   </script>
 </body>

@@ -103,6 +103,8 @@ node server.js
 - `POST /admin/lead-override`（仅在配置 `ADMIN_OVERRIDE_TOKEN` 后启用）
 - `GET /admin/lead-history`（仅在配置 `ADMIN_OVERRIDE_TOKEN` 后启用）
 - `POST /admin/lead-history/search`（仅在配置 `ADMIN_OVERRIDE_TOKEN` 后启用）
+- `GET /admin/lead-table`（仅在配置 `ADMIN_OVERRIDE_TOKEN` 后启用）
+- `POST /admin/lead-table/search`（仅在配置 `ADMIN_OVERRIDE_TOKEN` 后启用）
 
 默认 `AUTOMATION_PAUSED=true`。
 
@@ -247,6 +249,34 @@ node server.js
 - 某个号码有没有被回传 `NonImporterLead` / `QualifiedLead`
 - 某个号码有没有被手动改判过
 - 当前系统里这个号码的状态到底是什么
+
+## 总表页
+
+如果你不想先查询号码，想直接看全部客户的最新列表，可以打开：
+
+- `/admin/lead-table`
+
+例如：
+
+- `https://whatsapp-importer-screener-production.up.railway.app/admin/lead-table`
+
+这个页面默认按最新时间列出每个 `wa_id` 的最新一条记录，并附带：
+
+- `lead_status`
+- `buyer_type`
+- `profile_name`
+- `company_name`
+- `decision_reason`
+- 最新 Meta 事件名和状态
+- 最近一次手动改判时间
+- 前 3 条客户消息摘要
+
+适合用来：
+
+- 直接浏览最近全部线索
+- 筛选 `qualified` / `low_quality`
+- 按 `buyer_type` 看名单
+- 快速判断哪些线索已经回传、哪些改判过
 
 ## 导出记录格式
 
