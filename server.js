@@ -112,6 +112,10 @@ const META_QUALIFIED_EVENT_NAME =
   process.env.META_QUALIFIED_EVENT_NAME || "QualifiedLead";
 const META_DISQUALIFIED_EVENT_NAME =
   process.env.META_DISQUALIFIED_EVENT_NAME || "NonImporterLead";
+const ADMIN_OVERRIDE_TOKEN = process.env.ADMIN_OVERRIDE_TOKEN || "";
+const MANUAL_OVERRIDE_LOG_PATH =
+  process.env.MANUAL_OVERRIDE_LOG_PATH ||
+  path.join(__dirname, "data", "manual-overrides.ndjson");
 
 const ENABLE_LOCAL_NOTIFICATIONS = !/^(0|false|no)$/i.test(
   process.env.ENABLE_LOCAL_NOTIFICATIONS || "true"
@@ -122,6 +126,7 @@ ensureDir(path.dirname(HANDOFF_LOG_PATH));
 ensureDir(path.dirname(SCREENED_LOG_PATH));
 ensureDir(path.dirname(META_EVENT_LOG_PATH));
 ensureDir(path.dirname(EXPORT_LOG_PATH));
+ensureDir(path.dirname(MANUAL_OVERRIDE_LOG_PATH));
 ensureDir(path.dirname(STATE_PATH));
 ensureDir(path.dirname(EXISTING_CUSTOMER_LIST_PATH));
 ensureDir(path.dirname(AUTO_MUTED_CONTACTS_PATH));
@@ -377,6 +382,28 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { received: true, count: events.length });
     }
 
+    if (req.method === "GET" && url.pathname === "/admin/lead-override") {
+      if (!ADMIN_OVERRIDE_TOKEN) {
+        return json(res, 404, { error: "Admin override is disabled" });
+      }
+
+      return html(res, 200, renderAdminOverridePage());
+    }
+
+    if (req.method === "POST" && url.pathname === "/admin/lead-override") {
+      if (!ADMIN_OVERRIDE_TOKEN) {
+        return json(res, 404, { error: "Admin override is disabled" });
+      }
+
+      const body = await readJson(req);
+      if (String(body.token || "") !== ADMIN_OVERRIDE_TOKEN) {
+        return json(res, 403, { error: "Invalid admin override token" });
+      }
+
+      const result = await applyManualLeadOverride(body);
+      return json(res, 200, result);
+    }
+
     return json(res, 404, { error: "Not found" });
   } catch (error) {
     console.error(error);
@@ -425,6 +452,11 @@ function ensureDir(dirPath) {
 function json(res, status, payload) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(payload));
+}
+
+function html(res, status, payload) {
+  res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(payload);
 }
 
 function readJson(req) {
@@ -1932,6 +1964,122 @@ async function queueMetaFeedback(lead) {
   fs.appendFileSync(META_EVENT_LOG_PATH, `${JSON.stringify(queued)}\n`, "utf8");
 }
 
+async function applyManualLeadOverride(input) {
+  const waId = normalizeWaId(input.wa_id);
+  if (!waId) {
+    throw new Error("wa_id is required");
+  }
+
+  const leadStatus = normalizeLeadStatus(input.lead_status);
+  if (!leadStatus || leadStatus === "need_more_info") {
+    throw new Error("lead_status must be qualified or low_quality");
+  }
+
+  const previousState = sanitizeLeadState(leadState[waId] || createLeadState());
+  const countryGuess = clampText(
+    input.country_guess || previousState.country || guessCountryAndLanguage(waId).country,
+    80
+  );
+  const language =
+    normalizeLanguage(input.language) ||
+    normalizeLanguage(previousState.language) ||
+    guessCountryAndLanguage(waId).language;
+  const buyerType =
+    normalizeBuyerType(input.buyer_type) ||
+    normalizeBuyerType(previousState.buyerType) ||
+    (leadStatus === "qualified" ? "importer" : "non_importer");
+  const decisionReason =
+    clampText(input.decision_reason, 120) ||
+    `manual_override_${leadStatus}`;
+  const companyName = clampText(
+    input.company_name || previousState.companyName,
+    120
+  );
+  const profileName = clampText(
+    input.profile_name || previousState.profileName,
+    120
+  );
+  const note = clampText(input.note || "", 500);
+
+  const state = {
+    ...previousState,
+    language,
+    country: countryGuess,
+    companyName,
+    buyerType,
+    profileName,
+    screeningComplete: true,
+    lastLeadStatus: leadStatus,
+    lastUpdatedAt: new Date().toISOString(),
+    routingBucket: leadStatus === "qualified" ? "importer" : "non_importer",
+    decisionReason
+  };
+
+  if (leadStatus === "qualified") {
+    state.notifiedQualified = true;
+  }
+
+  leadState[waId] = state;
+  saveState(STATE_PATH, leadState);
+
+  const lead = {
+    waId,
+    text: note || previousState.lastInboundText || "",
+    profileName,
+    language,
+    countryGuess,
+    companyName,
+    buyerType,
+    leadSource: previousState.leadSource || "manual_override",
+    referralSourceType: previousState.referralSourceType || "",
+    referralSourceId: previousState.referralSourceId || "",
+    ctwaClid: previousState.ctwaClid || "",
+    state,
+    leadStatus,
+    routingBucket: state.routingBucket,
+    decisionReason
+  };
+
+  if (leadStatus === "qualified") {
+    appendHandoffLog(lead);
+  }
+  appendScreenedLeadLog(lead);
+  await exportLead(lead);
+  await queueMetaFeedback(lead);
+
+  const result = {
+    ok: true,
+    updated_at: new Date().toISOString(),
+    wa_id: waId,
+    lead_status: leadStatus,
+    buyer_type: buyerType,
+    routing_bucket: state.routingBucket,
+    decision_reason: decisionReason,
+    profile_name: profileName,
+    company_name: companyName,
+    language,
+    country_guess: countryGuess,
+    note
+  };
+
+  fs.appendFileSync(
+    MANUAL_OVERRIDE_LOG_PATH,
+    `${JSON.stringify({
+      ...result,
+      previous_status: previousState.lastLeadStatus || "",
+      previous_buyer_type: previousState.buyerType || "",
+      source: "admin_override"
+    })}\n`,
+    "utf8"
+  );
+
+  console.log(
+    `[override] wa=${waId} | status=${leadStatus} | buyer=${buyerType} | reason=${decisionReason}`
+  );
+
+  return result;
+}
+
 function buildMetaEventPayload(lead) {
   const waId = normalizeWaId(lead.waId);
   const now = Math.floor(Date.now() / 1000);
@@ -2201,6 +2349,209 @@ function normalizeLanguage(value) {
 function normalizeBuyerType(value) {
   const text = String(value || "").trim().toLowerCase();
   return supportedBuyerTypes.has(text) ? text : "";
+}
+
+function normalizeLeadStatus(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return supportedLeadStatuses.has(text) ? text : "";
+}
+
+function renderAdminOverridePage() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lead Override</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --panel: #171a21;
+      --muted: #9ba3b4;
+      --border: #2a3040;
+      --accent: #4c8dff;
+      --text: #f3f6fb;
+      --good: #26c281;
+      --bad: #ff6b6b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 32px 20px 56px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 16px 40px rgba(0,0,0,.25);
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 28px;
+    }
+    p {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    form {
+      display: grid;
+      gap: 14px;
+    }
+    .grid {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 14px;
+    }
+    input, select, textarea, button {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #0f131a;
+      color: var(--text);
+      padding: 12px 14px;
+      font: inherit;
+    }
+    textarea {
+      min-height: 96px;
+      resize: vertical;
+    }
+    button {
+      border: none;
+      background: var(--accent);
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .result {
+      margin-top: 18px;
+      padding: 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .success { border-color: rgba(38,194,129,.4); color: #c7f5df; }
+    .error { border-color: rgba(255,107,107,.4); color: #ffd4d4; }
+    @media (max-width: 720px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <h1>Manual Lead Override</h1>
+      <p>Use this page to manually mark a WhatsApp lead as qualified or non-qualified. It will update state, append export logs, and send the corresponding Meta event.</p>
+      <form id="override-form">
+        <label>
+          Admin Override Token
+          <input name="token" type="password" autocomplete="current-password" required />
+        </label>
+        <div class="grid">
+          <label>
+            WhatsApp Number (wa_id)
+            <input name="wa_id" placeholder="93703083827" required />
+          </label>
+          <label>
+            Lead Status
+            <select name="lead_status" required>
+              <option value="qualified">qualified</option>
+              <option value="low_quality">low_quality</option>
+            </select>
+          </label>
+          <label>
+            Buyer Type
+            <select name="buyer_type">
+              <option value="">auto</option>
+              <option value="importer">importer</option>
+              <option value="wholesaler">wholesaler</option>
+              <option value="distributor">distributor</option>
+              <option value="workshop">workshop</option>
+              <option value="retail">retail</option>
+              <option value="non_importer">non_importer</option>
+              <option value="unknown">unknown</option>
+            </select>
+          </label>
+          <label>
+            Decision Reason
+            <input name="decision_reason" placeholder="manual_override_qualified" />
+          </label>
+          <label>
+            Language
+            <input name="language" placeholder="en / es / ar ..." />
+          </label>
+          <label>
+            Country Guess
+            <input name="country_guess" placeholder="Pakistan" />
+          </label>
+          <label>
+            Profile Name
+            <input name="profile_name" placeholder="Ahmadullah HaQyaR" />
+          </label>
+          <label>
+            Company Name
+            <input name="company_name" placeholder="Optional" />
+          </label>
+        </div>
+        <label>
+          Note
+          <textarea name="note" placeholder="Optional note for this manual override"></textarea>
+        </label>
+        <button type="submit">Apply Override</button>
+      </form>
+      <div id="result" class="result" hidden></div>
+    </div>
+  </div>
+  <script>
+    const form = document.getElementById("override-form");
+    const result = document.getElementById("result");
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      result.hidden = true;
+      result.className = "result";
+
+      const payload = Object.fromEntries(new FormData(form).entries());
+      for (const [key, value] of Object.entries(payload)) {
+        if (typeof value === "string") payload[key] = value.trim();
+      }
+
+      try {
+        const response = await fetch("/admin/lead-override", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Override failed");
+        }
+        result.textContent = JSON.stringify(data, null, 2);
+        result.classList.add("success");
+      } catch (error) {
+        result.textContent = error.message;
+        result.classList.add("error");
+      }
+
+      result.hidden = false;
+    });
+  </script>
+</body>
+</html>`;
 }
 
 function clampText(value, maxLength) {

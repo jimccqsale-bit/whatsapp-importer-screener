@@ -84,6 +84,7 @@ TELEGRAM_MESSAGE_THREAD_ID=
 META_DATASET_ID=
 META_CAPI_TOKEN=
 META_GRAPH_API_VERSION=v23.0
+ADMIN_OVERRIDE_TOKEN=
 ```
 
 ## 本地启动
@@ -98,6 +99,8 @@ node server.js
 - `GET /health`
 - `GET /webhook`
 - `POST /webhook`
+- `GET /admin/lead-override`（仅在配置 `ADMIN_OVERRIDE_TOKEN` 后启用）
+- `POST /admin/lead-override`（仅在配置 `ADMIN_OVERRIDE_TOKEN` 后启用）
 
 默认 `AUTOMATION_PAUSED=true`。
 
@@ -167,6 +170,48 @@ node server.js
 - 目录是以文本链接形式发送
 - 名片是通过 WhatsApp `contacts` 消息类型发送
 - 两个功能默认关闭，不改变量不会影响现有流程
+
+## 手动改判
+
+如果系统把某个联系人判错了，你可以手动改判，不用直接改 Railway volume 文件。
+
+先配置：
+
+- `ADMIN_OVERRIDE_TOKEN`
+
+然后打开：
+
+- `/admin/lead-override`
+
+例如你的 Railway 域名是：
+
+- `https://whatsapp-importer-screener-production.up.railway.app/admin/lead-override`
+
+这个页面可以让你输入：
+
+- `wa_id`
+- `lead_status`（`qualified` / `low_quality`）
+- `buyer_type`
+- `decision_reason`
+- `language`
+- `country_guess`
+- `profile_name`
+- `company_name`
+- `note`
+
+提交后会自动做这些事：
+
+- 更新 `lead-state.json`
+- 把结果写入 `screened-leads.ndjson`
+- 写入 `exports.ndjson`
+- 按最终状态补发对应的 Meta 事件
+- 额外写入 `manual-overrides.ndjson`
+
+说明：
+
+- 改成 `qualified` 时，会补写合格客户日志
+- 这个手动改判不会再自动给客户补发 WhatsApp 话术
+- 这个入口默认关闭，只有设置了 `ADMIN_OVERRIDE_TOKEN` 才能访问
 
 ## 导出记录格式
 
