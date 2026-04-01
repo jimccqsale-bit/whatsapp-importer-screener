@@ -3389,6 +3389,25 @@ function renderAdminLeadTablePage() {
     .override-box button {
       padding: 8px 10px;
     }
+    .status-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 6px 0 14px;
+    }
+    .status-filter {
+      border: 1px solid var(--border);
+      background: var(--panel2);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .status-filter.active {
+      outline: 2px solid rgba(76,141,255,.5);
+    }
     .small {
       font-size: 12px;
       color: var(--muted);
@@ -3445,6 +3464,13 @@ function renderAdminLeadTablePage() {
         </div>
         <button type="submit">Load Leads</button>
       </form>
+      <div class="status-filters">
+        <button type="button" class="status-filter active" data-status="">all</button>
+        <button type="button" class="status-filter qualified" data-status="qualified">qualified</button>
+        <button type="button" class="status-filter unclassified" data-status="unclassified">unclassified</button>
+        <button type="button" class="status-filter need_more_info" data-status="need_more_info">need_more_info</button>
+        <button type="button" class="status-filter low_quality" data-status="low_quality">low_quality</button>
+      </div>
       <div id="count" class="count"></div>
       <div class="table-wrap">
         <table id="leads-table">
@@ -3477,6 +3503,7 @@ function renderAdminLeadTablePage() {
     const form = document.getElementById("table-form");
     const count = document.getElementById("count");
     const body = document.getElementById("table-body");
+    const statusFilterButtons = Array.from(document.querySelectorAll(".status-filter"));
 
     function escapeHtml(value) {
       return String(value || "")
@@ -3593,6 +3620,15 @@ function renderAdminLeadTablePage() {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       await loadTable();
+    });
+
+    statusFilterButtons.forEach((button) => {
+      button.addEventListener("click", async () => {
+        form.elements.lead_status.value = button.dataset.status || "";
+        statusFilterButtons.forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+        await loadTable();
+      });
     });
   </script>
 </body>
