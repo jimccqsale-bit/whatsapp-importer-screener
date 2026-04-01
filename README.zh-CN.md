@@ -101,6 +101,8 @@ node server.js
 - `POST /webhook`
 - `GET /admin/lead-override`（仅在配置 `ADMIN_OVERRIDE_TOKEN` 后启用）
 - `POST /admin/lead-override`（仅在配置 `ADMIN_OVERRIDE_TOKEN` 后启用）
+- `GET /admin/lead-history`（仅在配置 `ADMIN_OVERRIDE_TOKEN` 后启用）
+- `POST /admin/lead-history/search`（仅在配置 `ADMIN_OVERRIDE_TOKEN` 后启用）
 
 默认 `AUTOMATION_PAUSED=true`。
 
@@ -212,6 +214,39 @@ node server.js
 - 改成 `qualified` 时，会补写合格客户日志
 - 这个手动改判不会再自动给客户补发 WhatsApp 话术
 - 这个入口默认关闭，只有设置了 `ADMIN_OVERRIDE_TOKEN` 才能访问
+
+## 历史查询页
+
+如果你想查以前的记录，不要只搜 Railway 的 Deploy Logs。更稳的是用历史查询页直接看 `/data/` 里的结构化记录。
+
+打开：
+
+- `/admin/lead-history`
+
+例如：
+
+- `https://whatsapp-importer-screener-production.up.railway.app/admin/lead-history`
+
+你可以按这些条件查询：
+
+- `wa_id`
+- `lead_status`
+- `limit`
+
+页面会显示这些来源：
+
+- `exports`
+- `meta_events`
+- `screened_leads`
+- `manual_overrides`
+- 当前 `lead-state.json` 里的状态快照
+
+适合查：
+
+- 以前哪些人被判成 `low_quality`
+- 某个号码有没有被回传 `NonImporterLead` / `QualifiedLead`
+- 某个号码有没有被手动改判过
+- 当前系统里这个号码的状态到底是什么
 
 ## 导出记录格式
 

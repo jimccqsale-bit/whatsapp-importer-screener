@@ -404,6 +404,28 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, result);
     }
 
+    if (req.method === "GET" && url.pathname === "/admin/lead-history") {
+      if (!ADMIN_OVERRIDE_TOKEN) {
+        return json(res, 404, { error: "Admin history is disabled" });
+      }
+
+      return html(res, 200, renderAdminHistoryPage());
+    }
+
+    if (req.method === "POST" && url.pathname === "/admin/lead-history/search") {
+      if (!ADMIN_OVERRIDE_TOKEN) {
+        return json(res, 404, { error: "Admin history is disabled" });
+      }
+
+      const body = await readJson(req);
+      if (String(body.token || "") !== ADMIN_OVERRIDE_TOKEN) {
+        return json(res, 403, { error: "Invalid admin override token" });
+      }
+
+      const result = buildLeadHistoryResult(body);
+      return json(res, 200, result);
+    }
+
     return json(res, 404, { error: "Not found" });
   } catch (error) {
     console.error(error);
@@ -2548,6 +2570,427 @@ function renderAdminOverridePage() {
       }
 
       result.hidden = false;
+    });
+  </script>
+</body>
+</html>`;
+}
+
+function buildLeadHistoryResult(input) {
+  const waId = normalizeWaId(input.wa_id);
+  const leadStatus = normalizeLeadStatus(input.lead_status);
+  const limit = Math.min(200, Math.max(1, Number(input.limit || 50)));
+
+  const currentState = waId
+    ? {
+        wa_id: waId,
+        ...(sanitizeLeadState(leadState[waId] || createLeadState()))
+      }
+    : null;
+
+  const exportsLog = filterHistoryRecords(
+    readNdjsonFile(EXPORT_LOG_PATH).map((row) => {
+      const record = row.record || row;
+      return {
+        source: "exports",
+        queued_at: row.queued_at || record.exported_at || record.updated_at || "",
+        export_status: row.status || "",
+        destination: row.destination || "",
+        wa_id: normalizeWaId(record.wa_id),
+        lead_status: String(record.lead_status || ""),
+        buyer_type: String(record.buyer_type || ""),
+        decision_reason: String(record.decision_reason || ""),
+        profile_name: String(record.profile_name || ""),
+        company_name: String(record.company_name || ""),
+        language: String(record.language || ""),
+        country_guess: String(record.country_guess || ""),
+        record
+      };
+    }),
+    waId,
+    leadStatus,
+    limit
+  );
+
+  const metaEvents = filterHistoryRecords(
+    readNdjsonFile(META_EVENT_LOG_PATH).map((row) => {
+      const summary = row.lead_summary || {};
+      return {
+        source: "meta_events",
+        queued_at: row.queued_at || "",
+        meta_status: String(row.status || ""),
+        event_name: String(row.event_name || ""),
+        wa_id: normalizeWaId(summary.wa_id),
+        lead_status: String(summary.lead_status || ""),
+        buyer_type: String(summary.buyer_type || ""),
+        decision_reason: String(summary.decision_reason || ""),
+        profile_name: String(summary.profile_name || ""),
+        company_name: String(summary.company_name || ""),
+        language: String(summary.language || ""),
+        country_guess: String(summary.country_guess || ""),
+        summary
+      };
+    }),
+    waId,
+    leadStatus,
+    limit
+  );
+
+  const screenedLeads = filterHistoryRecords(
+    readNdjsonFile(SCREENED_LOG_PATH).map((row) => ({
+      source: "screened_leads",
+      updated_at: row.updated_at || "",
+      wa_id: normalizeWaId(row.wa_id),
+      lead_status: String(row.lead_status || ""),
+      buyer_type: String(row.buyer_type || ""),
+      decision_reason: String(row.decision_reason || ""),
+      profile_name: String(row.profile_name || ""),
+      company_name: String(row.company_name || ""),
+      language: String(row.language || ""),
+      country_guess: String(row.country_guess || ""),
+      record: row
+    })),
+    waId,
+    leadStatus,
+    limit
+  );
+
+  const overrides = filterHistoryRecords(
+    readNdjsonFile(MANUAL_OVERRIDE_LOG_PATH).map((row) => ({
+      source: "manual_overrides",
+      updated_at: row.updated_at || "",
+      wa_id: normalizeWaId(row.wa_id),
+      lead_status: String(row.lead_status || ""),
+      buyer_type: String(row.buyer_type || ""),
+      decision_reason: String(row.decision_reason || ""),
+      profile_name: String(row.profile_name || ""),
+      company_name: String(row.company_name || ""),
+      language: String(row.language || ""),
+      country_guess: String(row.country_guess || ""),
+      previous_status: String(row.previous_status || ""),
+      previous_buyer_type: String(row.previous_buyer_type || ""),
+      record: row
+    })),
+    waId,
+    leadStatus,
+    limit
+  );
+
+  return {
+    ok: true,
+    filters: {
+      wa_id: waId,
+      lead_status: leadStatus,
+      limit
+    },
+    current_state: currentState,
+    counts: {
+      exports: exportsLog.length,
+      meta_events: metaEvents.length,
+      screened_leads: screenedLeads.length,
+      manual_overrides: overrides.length
+    },
+    exports: exportsLog,
+    meta_events: metaEvents,
+    screened_leads: screenedLeads,
+    manual_overrides: overrides
+  };
+}
+
+function readNdjsonFile(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  return fs
+    .readFileSync(filePath, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch (_) {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function filterHistoryRecords(records, waId, leadStatus, limit) {
+  const filtered = records
+    .filter((record) => !waId || normalizeWaId(record.wa_id) === waId)
+    .filter((record) => !leadStatus || String(record.lead_status || "") === leadStatus)
+    .reverse();
+  return filtered.slice(0, limit);
+}
+
+function renderAdminHistoryPage() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lead History</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --panel: #171a21;
+      --panel2: #0f131a;
+      --muted: #9ba3b4;
+      --border: #2a3040;
+      --accent: #4c8dff;
+      --text: #f3f6fb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 32px 20px 56px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 16px 40px rgba(0,0,0,.25);
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 28px;
+    }
+    p {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    form {
+      display: grid;
+      gap: 14px;
+    }
+    .grid {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 14px;
+    }
+    input, select, button {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--panel2);
+      color: var(--text);
+      padding: 12px 14px;
+      font: inherit;
+    }
+    button {
+      border: none;
+      background: var(--accent);
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .section {
+      margin-top: 20px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+    }
+    .section h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .count {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .result, .record {
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--panel2);
+    }
+    .result {
+      margin-top: 18px;
+      padding: 14px;
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .records {
+      display: grid;
+      gap: 12px;
+    }
+    .record {
+      padding: 14px;
+      overflow: auto;
+    }
+    .record pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .summary {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    @media (max-width: 900px) {
+      .grid, .summary { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <h1>Lead History</h1>
+      <p>Search past lead records from exports, screened logs, Meta event logs, and manual overrides. Use a WhatsApp number to narrow to a single lead, or leave it empty to browse recent records.</p>
+      <form id="history-form">
+        <div class="grid">
+          <label>
+            Admin Override Token
+            <input name="token" type="password" autocomplete="current-password" required />
+          </label>
+          <label>
+            WhatsApp Number (wa_id)
+            <input name="wa_id" placeholder="93703083827" />
+          </label>
+          <label>
+            Lead Status
+            <select name="lead_status">
+              <option value="">all</option>
+              <option value="qualified">qualified</option>
+              <option value="low_quality">low_quality</option>
+              <option value="need_more_info">need_more_info</option>
+            </select>
+          </label>
+          <label>
+            Limit
+            <input name="limit" type="number" min="1" max="200" value="50" />
+          </label>
+        </div>
+        <button type="submit">Search History</button>
+      </form>
+
+      <div id="summary" class="section" hidden>
+        <div class="section-title">
+          <h2>Current State</h2>
+        </div>
+        <div class="record"><pre id="current-state"></pre></div>
+      </div>
+
+      <div id="counts" class="section summary" hidden></div>
+
+      <div id="exports-section" class="section" hidden>
+        <div class="section-title">
+          <h2>Exports</h2>
+          <div id="exports-count" class="count"></div>
+        </div>
+        <div id="exports-records" class="records"></div>
+      </div>
+
+      <div id="meta-section" class="section" hidden>
+        <div class="section-title">
+          <h2>Meta Events</h2>
+          <div id="meta-count" class="count"></div>
+        </div>
+        <div id="meta-records" class="records"></div>
+      </div>
+
+      <div id="screened-section" class="section" hidden>
+        <div class="section-title">
+          <h2>Screened Leads</h2>
+          <div id="screened-count" class="count"></div>
+        </div>
+        <div id="screened-records" class="records"></div>
+      </div>
+
+      <div id="overrides-section" class="section" hidden>
+        <div class="section-title">
+          <h2>Manual Overrides</h2>
+          <div id="overrides-count" class="count"></div>
+        </div>
+        <div id="overrides-records" class="records"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const form = document.getElementById("history-form");
+    const currentState = document.getElementById("current-state");
+    const counts = document.getElementById("counts");
+
+    function renderCard(container, value) {
+      const div = document.createElement("div");
+      div.className = "record";
+      const pre = document.createElement("pre");
+      pre.textContent = JSON.stringify(value, null, 2);
+      div.appendChild(pre);
+      container.appendChild(div);
+    }
+
+    function renderRecords(sectionId, countId, recordsId, rows, label) {
+      const section = document.getElementById(sectionId);
+      const count = document.getElementById(countId);
+      const records = document.getElementById(recordsId);
+      records.innerHTML = "";
+      if (!rows.length) {
+        section.hidden = true;
+        return;
+      }
+      count.textContent = rows.length + " " + label;
+      rows.forEach((row) => renderCard(records, row));
+      section.hidden = false;
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const payload = Object.fromEntries(new FormData(form).entries());
+      for (const [key, value] of Object.entries(payload)) {
+        if (typeof value === "string") payload[key] = value.trim();
+      }
+
+      const response = await fetch("/admin/lead-history/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        alert(data.error || "Search failed");
+        return;
+      }
+
+      currentState.textContent = JSON.stringify(data.current_state, null, 2);
+      document.getElementById("summary").hidden = false;
+
+      counts.innerHTML = "";
+      Object.entries(data.counts || {}).forEach(([key, value]) => {
+        const div = document.createElement("div");
+        div.className = "result";
+        div.textContent = key + ": " + value;
+        counts.appendChild(div);
+      });
+      counts.hidden = false;
+
+      renderRecords("exports-section", "exports-count", "exports-records", data.exports || [], "records");
+      renderRecords("meta-section", "meta-count", "meta-records", data.meta_events || [], "records");
+      renderRecords("screened-section", "screened-count", "screened-records", data.screened_leads || [], "records");
+      renderRecords("overrides-section", "overrides-count", "overrides-records", data.manual_overrides || [], "records");
     });
   </script>
 </body>
