@@ -2014,8 +2014,8 @@ async function applyManualLeadOverride(input) {
   }
 
   const leadStatus = normalizeLeadStatus(input.lead_status);
-  if (!leadStatus || leadStatus === "need_more_info") {
-    throw new Error("lead_status must be qualified or low_quality");
+  if (!leadStatus) {
+    throw new Error("lead_status must be qualified, need_more_info, or low_quality");
   }
 
   const previousState = sanitizeLeadState(leadState[waId] || createLeadState());
@@ -2029,8 +2029,11 @@ async function applyManualLeadOverride(input) {
     guessCountryAndLanguage(waId).language;
   const buyerType =
     normalizeBuyerType(input.buyer_type) ||
-    normalizeBuyerType(previousState.buyerType) ||
-    (leadStatus === "qualified" ? "importer" : "non_importer");
+    (leadStatus === "qualified"
+      ? "importer"
+      : leadStatus === "low_quality"
+        ? "non_importer"
+        : "unknown");
   const decisionReason =
     clampText(input.decision_reason, 120) ||
     `manual_override_${leadStatus}`;
@@ -2051,15 +2054,22 @@ async function applyManualLeadOverride(input) {
     companyName,
     buyerType,
     profileName,
-    screeningComplete: true,
+    screeningComplete: leadStatus !== "need_more_info",
     lastLeadStatus: leadStatus,
     lastUpdatedAt: new Date().toISOString(),
-    routingBucket: leadStatus === "qualified" ? "importer" : "non_importer",
+    routingBucket:
+      leadStatus === "qualified"
+        ? "importer"
+        : leadStatus === "low_quality"
+          ? "non_importer"
+          : "",
     decisionReason
   };
 
   if (leadStatus === "qualified") {
     state.notifiedQualified = true;
+  } else {
+    state.notifiedQualified = false;
   }
 
   leadState[waId] = state;
@@ -2086,9 +2096,11 @@ async function applyManualLeadOverride(input) {
   if (leadStatus === "qualified") {
     appendHandoffLog(lead);
   }
-  appendScreenedLeadLog(lead);
-  await exportLead(lead);
-  await queueMetaFeedback(lead);
+  if (leadStatus !== "need_more_info") {
+    appendScreenedLeadLog(lead);
+    await exportLead(lead);
+    await queueMetaFeedback(lead);
+  }
 
   const result = {
     ok: true,
@@ -2498,7 +2510,7 @@ function renderAdminOverridePage() {
   <div class="wrap">
     <div class="panel">
       <h1>Manual Lead Override</h1>
-      <p>Use this page to manually mark a WhatsApp lead as qualified or non-qualified. It will update state, append export logs, and send the corresponding Meta event.</p>
+      <p>Use this page to manually update a WhatsApp lead status. Final statuses sync exports and Meta feedback; <code>need_more_info</code> only updates the internal state.</p>
       <form id="override-form">
         <label>
           Admin Override Token
@@ -2513,6 +2525,7 @@ function renderAdminOverridePage() {
             Lead Status
             <select name="lead_status" required>
               <option value="qualified">qualified</option>
+              <option value="need_more_info">need_more_info</option>
               <option value="low_quality">low_quality</option>
             </select>
           </label>
@@ -3373,6 +3386,33 @@ function renderAdminLeadTablePage() {
       font-size: 12px;
       font-weight: 600;
     }
+    .status-cell {
+      display: grid;
+      gap: 8px;
+      min-width: 240px;
+    }
+    .status-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .status-action {
+      width: auto;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .status-action.active {
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+    }
+    .status-action:disabled {
+      opacity: .65;
+      cursor: wait;
+    }
     .qualified { background: rgba(38,194,129,.18); color: #b8f0d3; }
     .low_quality { background: rgba(255,107,107,.18); color: #ffd2d2; }
     .need_more_info { background: rgba(255,179,71,.18); color: #ffe0b0; }
@@ -3385,9 +3425,6 @@ function renderAdminLeadTablePage() {
       display: grid;
       gap: 6px;
       min-width: 180px;
-    }
-    .override-box button {
-      padding: 8px 10px;
     }
     .status-filters {
       display: flex;
@@ -3421,7 +3458,7 @@ function renderAdminLeadTablePage() {
   <div class="wrap">
     <div class="panel">
       <h1>All Leads Table</h1>
-      <p>This page shows the latest known record for each WhatsApp lead from <code>exports.ndjson</code>, enriched with the latest Meta event, current state, and latest manual override.</p>
+      <p>This page shows the latest known record for each WhatsApp lead from <code>exports.ndjson</code>, enriched with the latest Meta event, current state, and latest manual override. Click a status button in each row for one-tap updates.</p>
       <form id="table-form">
         <div class="grid">
           <label>
@@ -3504,6 +3541,7 @@ function renderAdminLeadTablePage() {
     const count = document.getElementById("count");
     const body = document.getElementById("table-body");
     const statusFilterButtons = Array.from(document.querySelectorAll(".status-filter"));
+    const quickStatuses = ["qualified", "need_more_info", "low_quality"];
 
     function escapeHtml(value) {
       return String(value || "")
@@ -3517,6 +3555,25 @@ function renderAdminLeadTablePage() {
     function renderStatus(value) {
       if (!value) return "";
       return '<span class="pill ' + escapeHtml(value) + '">' + escapeHtml(value) + '</span>';
+    }
+
+    function renderStatusQuickActions(row, buyerSelectId) {
+      const currentStatus = row.lead_status || "unclassified";
+      return [
+        '<div class="status-cell">',
+        renderStatus(currentStatus),
+        '<div class="status-actions">',
+        quickStatuses.map((status) => {
+          const classes = [
+            "status-action",
+            status,
+            currentStatus === status ? "active" : ""
+          ].filter(Boolean).join(" ");
+          return '<button type="button" class="' + classes + '" data-quick-status="' + escapeHtml(status) + '" data-wa="' + escapeHtml(row.wa_id) + '" data-buyer-select="' + escapeHtml(buyerSelectId) + '">' + escapeHtml(status) + '</button>';
+        }).join(""),
+        '</div>',
+        '</div>'
+      ].join("");
     }
 
     async function applyOverride(waId, leadStatus, buyerType) {
@@ -3533,7 +3590,7 @@ function renderAdminLeadTablePage() {
           token,
           wa_id: waId,
           lead_status: leadStatus,
-          buyer_type: buyerType || (leadStatus === "qualified" ? "importer" : "non_importer"),
+          buyer_type: buyerType || "",
           decision_reason: "manual_table_override"
         })
       });
@@ -3571,12 +3628,11 @@ function renderAdminLeadTablePage() {
 
       data.rows.forEach((row) => {
         const tr = document.createElement("tr");
-        const statusSelectId = "status-" + row.wa_id;
         const buyerSelectId = "buyer-" + row.wa_id;
         tr.innerHTML = [
           row.updated_at,
           '<code>' + escapeHtml(row.wa_id) + '</code>',
-          renderStatus(row.lead_status),
+          renderStatusQuickActions(row, buyerSelectId),
           escapeHtml(row.buyer_type),
           escapeHtml(row.profile_name),
           escapeHtml(row.company_name),
@@ -3589,31 +3645,22 @@ function renderAdminLeadTablePage() {
           escapeHtml(row.first_3_messages),
           [
             '<div class="override-box">',
-            '<select id="' + statusSelectId + '">',
-            '<option value="qualified"' + (row.lead_status === "qualified" ? ' selected' : '') + '>qualified</option>',
-            '<option value="low_quality"' + (row.lead_status === "low_quality" ? ' selected' : '') + '>low_quality</option>',
-            '</select>',
             '<select id="' + buyerSelectId + '">',
-            '<option value="importer"' + (row.buyer_type === "importer" ? ' selected' : '') + '>importer</option>',
-            '<option value="wholesaler"' + (row.buyer_type === "wholesaler" ? ' selected' : '') + '>wholesaler</option>',
-            '<option value="distributor"' + (row.buyer_type === "distributor" ? ' selected' : '') + '>distributor</option>',
-            '<option value="workshop"' + (row.buyer_type === "workshop" ? ' selected' : '') + '>workshop</option>',
-            '<option value="retail"' + (row.buyer_type === "retail" ? ' selected' : '') + '>retail</option>',
-            '<option value="non_importer"' + (row.buyer_type === "non_importer" ? ' selected' : '') + '>non_importer</option>',
-            '<option value="unknown"' + (row.buyer_type === "unknown" ? ' selected' : '') + '>unknown</option>',
+            '<option value="">auto by status</option>',
+            '<option value="importer">importer</option>',
+            '<option value="wholesaler">wholesaler</option>',
+            '<option value="distributor">distributor</option>',
+            '<option value="workshop">workshop</option>',
+            '<option value="retail">retail</option>',
+            '<option value="non_importer">non_importer</option>',
+            '<option value="unknown">unknown</option>',
             '</select>',
-            '<button type="button" data-wa="' + escapeHtml(row.wa_id) + '">Apply</button>',
+            '<div class="small">Quick status buttons use this buyer override if selected.</div>',
             '<div class="small">Current: ' + escapeHtml(row.current_state_status || row.lead_status || "unclassified") + '</div>',
             '</div>'
           ].join("")
         ].map((cell) => '<td>' + cell + '</td>').join('');
         body.appendChild(tr);
-
-        tr.querySelector("button").addEventListener("click", async () => {
-          const selectedStatus = document.getElementById(statusSelectId).value;
-          const selectedBuyer = document.getElementById(buyerSelectId).value;
-          await applyOverride(row.wa_id, selectedStatus, selectedBuyer);
-        });
       });
     }
 
@@ -3629,6 +3676,29 @@ function renderAdminLeadTablePage() {
         button.classList.add("active");
         await loadTable();
       });
+    });
+
+    body.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-quick-status]");
+      if (!button) return;
+
+      const buyerSelect = document.getElementById(button.dataset.buyerSelect);
+      const buyerType = buyerSelect ? buyerSelect.value : "";
+      const statusButtons = Array.from(
+        button.closest(".status-actions").querySelectorAll("[data-quick-status]")
+      );
+
+      statusButtons.forEach((item) => {
+        item.disabled = true;
+      });
+
+      try {
+        await applyOverride(button.dataset.wa, button.dataset.quickStatus, buyerType);
+      } finally {
+        statusButtons.forEach((item) => {
+          item.disabled = false;
+        });
+      }
     });
   </script>
 </body>

@@ -194,7 +194,7 @@ node server.js
 这个页面可以让你输入：
 
 - `wa_id`
-- `lead_status`（`qualified` / `low_quality`）
+- `lead_status`（`qualified` / `need_more_info` / `low_quality`）
 - `buyer_type`
 - `decision_reason`
 - `language`
@@ -206,14 +206,15 @@ node server.js
 提交后会自动做这些事：
 
 - 更新 `lead-state.json`
-- 把结果写入 `screened-leads.ndjson`
-- 写入 `exports.ndjson`
-- 按最终状态补发对应的 Meta 事件
+- 如果是最终状态，会把结果写入 `screened-leads.ndjson`
+- 如果是最终状态，会写入 `exports.ndjson`
+- 如果是最终状态，会按结果补发对应的 Meta 事件
 - 额外写入 `manual-overrides.ndjson`
 
 说明：
 
 - 改成 `qualified` 时，会补写合格客户日志
+- 改成 `need_more_info` 时，只更新内部状态，不会当成最终结果导出
 - 这个手动改判不会再自动给客户补发 WhatsApp 话术
 - 这个入口默认关闭，只有设置了 `ADMIN_OVERRIDE_TOKEN` 才能访问
 
@@ -282,9 +283,9 @@ node server.js
 
 这个总表页里还可以直接做手动改判：
 
-- 每行可直接选择 `qualified` / `low_quality`
-- 每行可直接调整 `buyer_type`
-- 点击 `Apply` 后会立刻调用手动改判接口
+- 每行可直接一键点击 `qualified` / `need_more_info` / `low_quality`
+- 每行可选填 `buyer_type`
+- 点击状态按钮后会立刻调用手动改判接口
 
 ## 导出记录格式
 
