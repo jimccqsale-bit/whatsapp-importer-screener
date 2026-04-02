@@ -2137,6 +2137,7 @@ async function applyManualLeadOverride(input) {
 
 function buildMetaEventPayload(lead) {
   const waId = normalizeWaId(lead.waId);
+  const ctwaClid = String(lead.ctwaClid || lead.state?.ctwaClid || "").trim();
   const now = Math.floor(Date.now() / 1000);
   return {
     event_name:
@@ -2148,7 +2149,8 @@ function buildMetaEventPayload(lead) {
     event_source_url: CATALOG_URL,
     user_data: {
       ph: [sha256(waId)],
-      external_id: [sha256(waId)]
+      external_id: [sha256(waId)],
+      ...(ctwaClid ? { ctwa_clid: ctwaClid } : {})
     },
     custom_data: {
       source: "whatsapp_click_to_message",
